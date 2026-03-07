@@ -36,3 +36,11 @@ jobs:
 
       - name: Run tests
         run: pytest --cov --cov-fail-under=80 || echo "No tests yet"
+
+  commitlint:
+      name: Lint PR Title
+      runs-on: ubuntu-latest
+      steps:
+        - uses: amannn/action-semantic-pull-request@v5
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
