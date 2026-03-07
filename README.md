@@ -1,2 +1,2 @@
 # career-coaching
-Career Coaching service for all ages 
+Career Coaching service for all ages
