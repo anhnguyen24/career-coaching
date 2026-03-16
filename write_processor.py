@@ -1,3 +1,4 @@
+content = """import json
 import anthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,30 +16,29 @@ async def process_submission(
 ) -> dict:
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    # Find submission in DB
     result = await db.execute(
-        select(Submission).where(Submission.event_id == submission_data["event_id"])
+        select(Submission).where(
+            Submission.event_id == submission_data["event_id"]
+        )
     )
     submission = result.scalar_one_or_none()
 
     if not submission:
-        print(f"Submission not found: {submission_data['event_id']}")
+        print(f"Submission not found: {submission_data[\'event_id\']}")
         return {}
 
-    # Update status to processing
     submission.status = "processing"
     await db.flush()
 
     try:
-        # Step 1 — Score personality
         print(f"Scoring personality for {submission.id}...")
-        personality = await score_personality(submission_data["fields"], client)
+        personality = await score_personality(
+            submission_data["fields"], client
+        )
 
-        # Step 2 — Match careers
         print(f"Matching careers for {submission.id}...")
         careers = await match_careers(personality, client)
 
-        # Step 3 — Save result to DB
         db_result = Result(
             submission_id=submission.id,
             personality_scores=personality,
@@ -49,7 +49,6 @@ async def process_submission(
         db.add(db_result)
         await db.flush()
 
-        # Step 4 — Generate reports
         print(f"Generating reports for {submission.id}...")
         result_data = {
             "name": submission.email,
@@ -67,7 +66,6 @@ async def process_submission(
             f"{submission.id}_infographic.png",
         )
 
-        # Step 5 — Update submission status
         submission.status = "complete"
         await db.flush()
 
@@ -84,5 +82,11 @@ async def process_submission(
     except Exception as e:
         submission.status = "failed"
         await db.flush()
-        print(f"Failed to process submission {submission.id}: {e}")
+        print(f"Failed to process {submission.id}: {e}")
         raise
+"""
+
+with open("apps/worker/app/services/processor.py", "w") as f:
+    f.write(content)
+
+print("processor.py written successfully!")
