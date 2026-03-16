@@ -4,8 +4,12 @@ from sqlalchemy import select
 from app.config import settings
 from app.services.personality import score_personality
 from app.services.career import match_careers
-from app.services.report import generate_pdf
-from app.services.infographic import generate_infographic
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "packages"))
+from reports.report import generate_pdf
+from reports.infographic import generate_infographic
 from app.db.models import Submission, Result
 
 
