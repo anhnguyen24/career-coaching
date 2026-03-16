@@ -4,7 +4,7 @@ from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).parent / "templates"
 OUTPUT_DIR = Path("/tmp/career-coaching")
 
 
