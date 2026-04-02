@@ -1,4 +1,7 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
+
+_env_file = Path(__file__).parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -7,7 +10,7 @@ class Settings(BaseSettings):
     tally_signing_secret: str = ""
     debug: bool = False
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": str(_env_file), "extra": "ignore"}
 
 
 settings = Settings()

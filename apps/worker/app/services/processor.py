@@ -19,6 +19,53 @@ from reports.infographic import generate_infographic
 from app.db.models import Submission, Result
 
 
+def get_mock_results() -> tuple[dict, dict]:
+    personality = {
+        "mbti": "INTJ",
+        "big_five": {
+            "openness": 0.85,
+            "conscientiousness": 0.75,
+            "extraversion": 0.30,
+            "agreeableness": 0.60,
+            "neuroticism": 0.25,
+        },
+        "strengths": ["Strategic thinking", "Problem solving", "Independence"],
+        "blind_spots": ["Perfectionism", "Difficulty delegating"],
+        "summary": "A strategic and analytical thinker who excels at complex problem solving and long-term planning.",
+    }
+    careers = {
+        "careers": [
+            {
+                "title": "Software Architect",
+                "fit_score": 0.92,
+                "reason": "Matches analytical nature and systems thinking",
+                "required_skills": ["Python", "System Design", "Leadership"],
+                "growth_outlook": "positive",
+            },
+            {
+                "title": "Data Scientist",
+                "fit_score": 0.88,
+                "reason": "Leverages analytical strengths and curiosity",
+                "required_skills": ["Python", "Statistics", "ML"],
+                "growth_outlook": "positive",
+            },
+            {
+                "title": "Product Manager",
+                "fit_score": 0.75,
+                "reason": "Strategic vision suits product leadership",
+                "required_skills": ["Communication", "Analytics", "Roadmapping"],
+                "growth_outlook": "stable",
+            },
+        ],
+        "action_steps": [
+            "Build a portfolio of 3 projects showcasing your technical skills",
+            "Get certified in your primary technology stack",
+            "Start contributing to open source projects",
+        ],
+    }
+    return personality, careers
+
+
 async def process_submission(
     submission_data: dict,
     db: AsyncSession,
@@ -40,13 +87,14 @@ async def process_submission(
     await db.flush()
 
     try:
-        # Step 1 — Score personality
-        print(f"Scoring personality for {submission.id}...")
-        personality = await score_personality(submission_data["fields"], client)
-
-        # Step 2 — Match careers
-        print(f"Matching careers for {submission.id}...")
-        careers = await match_careers(personality, client)
+        if settings.mock_ai:
+            print(f"Using mock AI for {submission.id}...")
+            personality, careers = get_mock_results()
+        else:
+            print(f"Scoring personality for {submission.id}...")
+            personality = await score_personality(submission_data["fields"], client)
+            print(f"Matching careers for {submission.id}...")
+            careers = await match_careers(personality, client)
 
         # Step 3 — Save result to DB
         db_result = Result(
