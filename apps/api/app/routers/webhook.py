@@ -41,20 +41,20 @@ async def tally_webhook(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors())
 
-    # Extract email from fields if present
+    # Extract email from fields
     email = next(
-        (f.value for f in submission.fields if "email" in f.label.lower()),
+        (f.value for f in submission.data.fields if f.type == "INPUT_EMAIL"),
         None,
     )
 
     # Save to database
     db_submission = Submission(
-        event_id=submission.event_id,
-        event_type=submission.event_type,
-        form_id=submission.form_id,
-        respondent_id=submission.respondent_id,
+        event_id=submission.eventId,
+        event_type=submission.eventType,
+        form_id=submission.data.formId,
+        respondent_id=submission.data.respondentId,
         email=email,
-        raw_fields=[f.model_dump() for f in submission.fields],
+        raw_fields=[f.model_dump() for f in submission.data.fields],
         status="pending",
     )
     db.add(db_submission)

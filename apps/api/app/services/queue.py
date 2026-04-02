@@ -8,6 +8,11 @@ async def enqueue_submission(submission: TallySubmission) -> None:
     client = aioredis.from_url(settings.redis_url)
     await client.lpush(
         "submissions:pending",
-        json.dumps(submission.model_dump()),
+        json.dumps(
+            {
+                "event_id": submission.eventId,
+                "fields": [f.model_dump() for f in submission.data.fields],
+            }
+        ),
     )
-    await client.aclose()
+    await client.close()
