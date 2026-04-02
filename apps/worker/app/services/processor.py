@@ -1,13 +1,19 @@
+# ruff: noqa: E402
+import sys
+from pathlib import Path
 import anthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
+# Add shared packages to path
+_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str((_root / "../packages").resolve()))
+sys.path.insert(0, str(_root))
+
 from app.config import settings
 from app.services.personality import score_personality
 from app.services.career import match_careers
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "packages"))
+from mailer.app.services.email import send_results_email
 from reports.report import generate_pdf
 from reports.infographic import generate_infographic
 from app.db.models import Submission, Result
@@ -76,6 +82,22 @@ async def process_submission(
         await db.flush()
 
         print(f"Done! Reports at {pdf_path} and {infographic_path}")
+
+        # Step 6 — Send email
+        if submission.email:
+            print(f"Sending email to {submission.email}...")
+            send_results_email(
+                to_email=submission.email,
+                name=submission.email,
+                personality_type=personality["mbti"],
+                pdf_path=pdf_path,
+                infographic_path=infographic_path,
+            )
+            submission.status = "delivered"
+        else:
+            submission.status = "complete"
+
+        await db.flush()
 
         return {
             "submission_id": str(submission.id),
