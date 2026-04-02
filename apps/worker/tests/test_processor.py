@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from app.services.processor import process_submission
 
 
 @pytest.mark.asyncio
@@ -77,9 +78,9 @@ async def test_process_submission_success():
         "app.services.processor.generate_infographic",
         new_callable=AsyncMock,
         return_value="/tmp/test_infographic.png",
+    ), patch(
+        "app.services.processor.send_results_email", return_value={"id": "email_123"}
     ), patch("app.services.processor.anthropic.AsyncAnthropic"):
-        from app.services.processor import process_submission
-
         result = await process_submission(
             {"event_id": "evt_123", "fields": []},
             mock_db,
