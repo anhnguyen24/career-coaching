@@ -1,0 +1,223 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Career Coaching Survey Schema",
+  "description": "Flexible schema for survey questions and scoring config. Supports add/remove of axes, groups, dimensions, and composite scores without schema changes.",
+  "type": "object",
+  "required": ["version", "metadata", "tests", "scoring"],
+  "additionalProperties": false,
+  "properties": {
+
+    "version": {
+      "type": "string",
+      "description": "Survey version identifier e.g. v2, v3",
+      "examples": ["v2", "v3"]
+    },
+
+    "metadata": {
+      "type": "object",
+      "required": ["name", "total_questions", "scale"],
+      "additionalProperties": false,
+      "properties": {
+        "name":             { "type": "string" },
+        "total_questions":  { "type": "integer" },
+        "scale": {
+          "type": "object",
+          "required": ["min", "max", "reverse_formula"],
+          "additionalProperties": false,
+          "properties": {
+            "min":             { "type": "integer" },
+            "max":             { "type": "integer" },
+            "reverse_formula": { "type": "string", "examples": ["6 - score"] }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "tests": {
+      "type": "array",
+      "description": "List of tests in order. Each test contains its questions.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "question_range", "questions"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier used in scoring references",
+            "examples": ["mbti", "holland", "ocean"]
+          },
+          "name":  { "type": "string" },
+          "question_range": {
+            "type": "object",
+            "required": ["start", "end"],
+            "additionalProperties": false,
+            "properties": {
+              "start": { "type": "integer" },
+              "end":   { "type": "integer" }
+            }
+          },
+          "questions": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/question" }
+          }
+        }
+      }
+    },
+
+    "scoring": {
+      "type": "object",
+      "required": ["tests", "composite_scores"],
+      "additionalProperties": false,
+      "properties": {
+
+        "tests": {
+          "type": "array",
+          "description": "Scoring config per test — must match test ids in the tests array",
+          "items": { "$ref": "#/definitions/test_scoring" }
+        },
+
+        "composite_scores": {
+          "type": "array",
+          "description": "Composite scores built from combinations of test scores (e.g. SSS)",
+          "items": { "$ref": "#/definitions/composite_score" }
+        }
+      }
+    }
+  },
+
+  "definitions": {
+
+    "question": {
+      "type": "object",
+      "required": ["number", "axis", "reversed", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "number":     { "type": "integer", "description": "Global question number 1-180" },
+        "axis":       { "type": "string",  "description": "Which axis/group/dimension this question measures" },
+        "reversed":   { "type": "boolean", "description": "Whether to apply reverse scoring (max+1 - score)" },
+        "text":       { "type": "string",  "description": "Question text shown to student" },
+        "low_label":  { "type": "string",  "description": "Label for scale minimum value" },
+        "high_label": { "type": "string",  "description": "Label for scale maximum value" }
+      }
+    },
+
+    "interpretation_thresholds": {
+      "type": "array",
+      "description": "Ordered list of thresholds from low to high. Last item must have max = null.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["max", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "max":   { "type": ["number", "null"], "description": "Upper bound exclusive. null means no upper bound (last item)." },
+          "label": { "type": "string" }
+        }
+      }
+    },
+
+    "test_scoring": {
+      "type": "object",
+      "required": ["test_id", "method", "groups"],
+      "additionalProperties": false,
+      "properties": {
+        "test_id": {
+          "type": "string",
+          "description": "Must match a test id in the tests array"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["average", "sum", "average_with_reverse"],
+          "description": "How to aggregate question scores within each group"
+        },
+        "groups": {
+          "type": "array",
+          "description": "List of scoring groups/axes/dimensions. Add or remove freely.",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/scoring_group" }
+        },
+        "interpretation_thresholds": { "$ref": "#/definitions/interpretation_thresholds" },
+        "clarity_thresholds": { "$ref": "#/definitions/interpretation_thresholds" },
+        "overall_clarity_thresholds": { "$ref": "#/definitions/interpretation_thresholds" },
+        "max_per_group": { "type": "integer" }
+      }
+    },
+
+    "scoring_group": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id":       { "type": "string", "description": "Short identifier e.g. E, I, R, O, C" },
+        "name":     { "type": "string", "description": "Display name e.g. Hướng ngoại" },
+        "forward":  { "type": "array", "items": { "type": "integer" }, "description": "Question numbers scored normally" },
+        "reversed": { "type": "array", "items": { "type": "integer" }, "description": "Question numbers with reverse scoring" },
+        "paired_with": {
+          "type": "string",
+          "description": "For bipolar axes (e.g. MBTI): the opposing group id. E pairs with I, S pairs with N, etc."
+        }
+      }
+    },
+
+    "composite_score": {
+      "type": "object",
+      "required": ["id", "name", "components", "interpretation_thresholds"],
+      "additionalProperties": false,
+      "properties": {
+        "id":    { "type": "string", "examples": ["sss", "ccs"] },
+        "name":  { "type": "string", "examples": ["Social Synchronization Score"] },
+        "label": { "type": "string", "description": "Short display label" },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Weighted components that make up this composite score",
+          "items": { "$ref": "#/definitions/composite_component" }
+        },
+        "interpretation_thresholds": { "$ref": "#/definitions/interpretation_thresholds" }
+      }
+    },
+
+    "composite_component": {
+      "type": "object",
+      "required": ["source", "weight"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "bipolar_ratio",
+            "test_group",
+            "question_subset"
+          ],
+          "description": "Where to pull the value from. bipolar_ratio = E/(E+I) style formula. test_group = avg/sum of a named group. question_subset = avg of custom question list."
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Contribution weight. All weights in a composite score should sum to 1.0"
+        },
+        "test_id":    { "type": "string", "description": "Which test to pull from" },
+        "group_id":   { "type": "string", "description": "Which group/axis/dimension within that test" },
+        "ratio_formula": {
+          "type": "object",
+          "description": "For bipolar_ratio: defines the two poles used in the ratio",
+          "required": ["numerator_group", "denominator_groups"],
+          "additionalProperties": false,
+          "properties": {
+            "numerator_group":    { "type": "string" },
+            "denominator_groups": { "type": "array", "items": { "type": "string" } },
+            "scale_min":          { "type": "number" },
+            "scale_max":          { "type": "number" },
+            "formula":            { "type": "string", "description": "Human readable formula for documentation" }
+          }
+        },
+        "forward":  { "type": "array", "items": { "type": "integer" }, "description": "For question_subset: normally scored questions" },
+        "reversed": { "type": "array", "items": { "type": "integer" }, "description": "For question_subset: reverse scored questions" }
+      }
+    }
+  }
+}
