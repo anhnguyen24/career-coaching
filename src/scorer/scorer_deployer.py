@@ -1,23 +1,22 @@
 """
-scorer/scorer_deployer.py — Generates Scores tab formulas and runs integration test
+scorer/scorer_deployer.py — Generates Scores tab formulas and manages seed rows
 
 What it does:
-1. deploy_formulas()
+
+1. deploy_formulas() — called by --scorer
    - Reads scoring config from survey JSON
-   - Generates correct Google Sheets formulas for each scoring column
-   - Writes those formulas to the seed row (row 2) of the Scores tab
-   - All future onFormSubmit copies will inherit these formulas
+   - Injects mock row into Form Responses 2 (permanent)
+   - Generates fresh Scores tab formulas from JSON
+   - Writes formulas + survey_version tag to a new Scores row (permanent)
+   - Waits for recalculation, compares against expected
+   - ✅ Pass → both rows stay (new permanent seed row for future submissions)
+   - ❌ Fail → deletes both rows, exits with error
 
-2. run_integration_test()
-   - Loads mock_submission.json (anonymised test answers + expected scores)
-   - Injects answers directly into Form Responses 2 via Sheets API
-   - Copies seed row formulas to a new test row
-   - Waits for Google Sheets to recalculate
-   - Reads the Scores tab output
-   - Compares against expected scores in mock_submission.json
-   - Deletes the test row after (clean up)
+2. run_integration_test() — called by --test
+   - Same as deploy_formulas() but always deletes both rows after
+   - Nothing permanent changes in the sheet
 
-Before running integration test, generate the mock first:
+Before running, generate the mock first:
     python tests/generate_mock.py src/survey_versions/survey_v2.json
 """
 
@@ -97,52 +96,95 @@ class ScorerDeployer:
         self._service        = self._build_service()
         self._scorer         = Scorer(survey)
 
-        # Build scoring lookup
         self._test_scoring = {
             ts["test_id"]: ts
             for ts in survey["scoring"]["tests"]
         }
 
     # ----------------------------------------------------------
-    # Public: deploy formulas
+    # Public: deploy formulas (--scorer) — permanent if passed
     # ----------------------------------------------------------
 
     def deploy_formulas(self):
-        """Generate formulas from JSON and write to Scores tab seed row."""
-        formulas = self._generate_formulas(data_row=6, scores_row=2)
-        print(f"  Generated {len(formulas)} scoring formulas")
-        print(f"  Writing to {self._scores_sheet} row 2 (seed row)...")
-        self._write_row(self._scores_sheet, 2, formulas)
-        print(f"  ✅ Scores tab seed row updated")
-
-    # ----------------------------------------------------------
-    # Public: integration test
-    # ----------------------------------------------------------
-
-    def run_integration_test(self):
+        """
+        Inject mock row + write Scores formulas permanently.
+        Deletes both rows only if comparison fails.
+        """
         mock = _load_mock()
         _validate_mock_version(mock, self._survey)
 
         answers      = {int(k): v for k, v in mock["answers"].items()}
         student_info = mock["student_info"]
         expected     = mock["expected"]
+        version      = self._survey["version"]
 
         print(f"  Mock version: {mock['version']}")
-        print(f"  Injecting test row ({student_info['token']})...")
-        test_row_index = self._inject_test_row(answers, student_info)
-        print(f"  Test row inserted at row {test_row_index} in {self._response_sheet}")
+        print(f"  Injecting mock row ({student_info['token']})...")
+        data_row = self._inject_test_row(answers, student_info, version)
+        print(f"  Mock row inserted at row {data_row} in {self._response_sheet}")
 
         scores_last_row = self._get_last_row(self._scores_sheet)
-        new_scores_row  = scores_last_row + 1
-        formulas        = self._generate_formulas(data_row=test_row_index, scores_row=new_scores_row)
-        self._write_row(self._scores_sheet, new_scores_row, formulas)
-        print(f"  Scores formulas written to row {new_scores_row}")
+        scores_row      = scores_last_row + 1
+        formulas        = self._generate_formulas(data_row=data_row, scores_row=scores_row)
+        self._write_row(self._scores_sheet, scores_row, formulas)
+        self._center_row(self._scores_sheet, scores_row, len(formulas))
+        print(f"  Scores formulas written to row {scores_row} (survey_version={version})")
 
         print(f"  Waiting 5s for Sheets to recalculate...")
         time.sleep(5)
 
-        sheets_scores = self._read_scores_row(new_scores_row)
+        sheets_scores = self._read_scores_row(scores_row)
         passed        = self._compare(sheets_scores, expected)
+
+        if not passed:
+            print(f"\n  ❌ Comparison failed — rolling back...")
+            self._delete_row(self._response_sheet, data_row)
+            self._delete_row(self._scores_sheet, scores_row)
+            print(f"  Both rows deleted")
+            sys.exit(1)
+        else:
+            print(f"\n  ✅ Scores tab seed row deployed and verified")
+            print(f"  Mock row (HN-2026-0009) is now the seed row for future submissions")
+
+    # ----------------------------------------------------------
+    # Public: integration test (--test) — always temporary
+    # ----------------------------------------------------------
+
+    def run_integration_test(self):
+        """
+        Inject mock row, compare, then always delete both rows.
+        Nothing permanent changes in the sheet.
+        """
+        mock = _load_mock()
+        _validate_mock_version(mock, self._survey)
+
+        answers      = {int(k): v for k, v in mock["answers"].items()}
+        student_info = mock["student_info"]
+        expected     = mock["expected"]
+        version      = self._survey["version"]
+
+        print(f"  Mock version: {mock['version']}")
+        print(f"  Injecting test row ({student_info['token']})...")
+        data_row = self._inject_test_row(answers, student_info, version)
+        print(f"  Test row inserted at row {data_row} in {self._response_sheet}")
+
+        scores_last_row = self._get_last_row(self._scores_sheet)
+        scores_row      = scores_last_row + 1
+        formulas        = self._generate_formulas(data_row=data_row, scores_row=scores_row)
+        self._write_row(self._scores_sheet, scores_row, formulas)
+        self._center_row(self._scores_sheet, scores_row, len(formulas))
+        print(f"  Scores formulas written to row {scores_row}")
+
+        print(f"  Waiting 5s for Sheets to recalculate...")
+        time.sleep(5)
+
+        sheets_scores = self._read_scores_row(scores_row)
+        passed        = self._compare(sheets_scores, expected)
+
+        print(f"\n  Cleaning up test rows...")
+        self._delete_row(self._response_sheet, data_row)
+        self._delete_row(self._scores_sheet, scores_row)
+        print(f"  Test rows deleted")
 
         if not passed:
             print(f"\n  ❌ Integration test FAILED — see mismatches above")
@@ -157,7 +199,7 @@ class ScorerDeployer:
     def _generate_formulas(self, data_row: int, scores_row: int) -> list:
         """
         Generate all Scores tab formulas for a given data row.
-        data_row  — row in Form Responses 2 (for question references)
+        data_row   — row in Form Responses 2 (for question references)
         scores_row — row in Scores tab (for self-references between derived columns)
         """
         rs       = self._response_sheet
@@ -178,14 +220,15 @@ class ScorerDeployer:
                 g = mbti_groups[gid]
                 formulas.append(self._avg_formula(rs, data_row, g["forward"], g.get("reversed", [])))
 
-        # Column map for MBTI groups (D=4 onwards, 1-based) — Scores tab columns
+        # Column map for MBTI groups in Scores tab (D=4 onwards)
         col_map = {gid: col_letter(4 + i) for i, gid in enumerate(["E","I","S","N","T","F","J","P"])}
 
-        # MBTI type (L) — references Scores tab scores_row
         e_col = col_map["E"]; i_col = col_map["I"]
         s_col = col_map["S"]; n_col = col_map["N"]
         t_col = col_map["T"]; f_col = col_map["F"]
         j_col = col_map["J"]; p_col = col_map["P"]
+
+        # MBTI type (L)
         formulas.append(
             f'=IF({e_col}{scores_row}>={i_col}{scores_row},"E","I")'
             f'&IF({s_col}{scores_row}>={n_col}{scores_row},"S","N")'
@@ -193,7 +236,7 @@ class ScorerDeployer:
             f'&IF({j_col}{scores_row}>={p_col}{scores_row},"J","P")'
         )
 
-        # Gaps (M-P) — references Scores tab scores_row
+        # Gaps (M-P)
         for a, b in axes_order:
             formulas.append(f"=ROUND(ABS({col_map[a]}{scores_row}-{col_map[b]}{scores_row}),2)")
 
@@ -213,26 +256,26 @@ class ScorerDeployer:
             f'"MBTI có độ rõ tương đối tốt, nhưng vẫn nên đọc cùng Holland và OCEAN.")'
         )
 
-        # Holland — SUM per group (T-Y) — references Form Responses data_row
+        # Holland — SUM per group (T-Y)
         holland_ts        = self._test_scoring["holland"]
         holland_col_start = len(formulas) + 1
         for g in holland_ts["groups"]:
             formulas.append(self._sum_formula(rs, data_row, g["forward"]))
 
-        # Holland Top 3 (Z-AB) — references Scores tab scores_row
+        # Holland Top 3 (Z-AB)
         h_cols = [col_letter(holland_col_start + i) for i in range(len(holland_ts["groups"]))]
         h_ids  = [g["id"] for g in holland_ts["groups"]]
         formulas.append(self._holland_rank_formula(h_cols, h_ids, scores_row, 1))
         formulas.append(self._holland_rank_formula(h_cols, h_ids, scores_row, 2))
         formulas.append(self._holland_rank_formula(h_cols, h_ids, scores_row, 3))
 
-        # Holland Top 3 label (AC) — references Scores tab scores_row
+        # Holland Top 3 label (AC)
         top3_col1 = col_letter(len(formulas) - 2)
         top3_col2 = col_letter(len(formulas) - 1)
         top3_col3 = col_letter(len(formulas))
         formulas.append(f"={top3_col1}{scores_row}&\", \"&{top3_col2}{scores_row}&\", \"&{top3_col3}{scores_row}")
 
-        # OCEAN — average with reverse (AD-AH) — references Form Responses data_row
+        # OCEAN — average with reverse (AD-AH)
         ocean_ts        = self._test_scoring["ocean"]
         ocean_col_start = len(formulas) + 1
         for g in ocean_ts["groups"]:
@@ -242,18 +285,18 @@ class ScorerDeployer:
         sss_def     = next(cs for cs in self._survey["scoring"]["composite_scores"] if cs["id"] == "sss")
         ocean_e_col = col_letter(ocean_col_start + 2)  # O=0, C=1, E=2
 
-        # MBTI social ratio (AI) — references Scores tab scores_row
+        # MBTI social ratio (AI)
         formulas.append(f"=ROUND({e_col}{scores_row}/({e_col}{scores_row}+{i_col}{scores_row}),2)")
 
-        # MBTI social score (AJ) — references Scores tab scores_row
+        # MBTI social score (AJ)
         ratio_col = col_letter(len(formulas))
         formulas.append(f"=ROUND(1+4*{ratio_col}{scores_row},2)")
 
-        # Raw social score (AK) — references Form Responses data_row
+        # Raw social score (AK)
         sss_comp = next(c for c in sss_def["components"] if c["source"] == "question_subset")
         formulas.append(self._avg_formula(rs, data_row, sss_comp.get("forward", []), sss_comp.get("reversed", [])))
 
-        # SSS total (AL) — references Scores tab scores_row
+        # SSS total (AL)
         mbti_ss_col = col_letter(len(formulas) - 1)
         raw_ss_col  = col_letter(len(formulas))
         weights     = {c["source"]: c["weight"] for c in sss_def["components"]}
@@ -266,9 +309,12 @@ class ScorerDeployer:
             f"+{w_raw}*{raw_ss_col}{scores_row},2)"
         )
 
-        # SSS interpretation (AM) — references Scores tab scores_row
+        # SSS interpretation (AM)
         sss_col = col_letter(len(formulas))
         formulas.append(self._interpret_formula(sss_col, scores_row, sss_def.get("interpretation_thresholds", [])))
+
+        # Survey version (AN) — for historical record
+        formulas.append(self._survey['version'])
 
         return formulas
 
@@ -306,10 +352,10 @@ class ScorerDeployer:
         return f"={result}"
 
     # ----------------------------------------------------------
-    # Integration test helpers
+    # Shared helpers
     # ----------------------------------------------------------
 
-    def _inject_test_row(self, answers: dict, student_info: dict) -> int:
+    def _inject_test_row(self, answers: dict, student_info: dict, version: str) -> int:
         """Append mock test answers to Form Responses 2. Returns new row index."""
         total    = len(answers)
         info_row = [
@@ -347,7 +393,7 @@ class ScorerDeployer:
     def _read_scores_row(self, row: int) -> list:
         result = self._service.spreadsheets().values().get(
             spreadsheetId=self._sheet_id,
-            range=f"'{self._scores_sheet}'!A{row}:AM{row}",
+            range=f"'{self._scores_sheet}'!A{row}:AN{row}",
             valueRenderOption="UNFORMATTED_VALUE",
         ).execute()
         values = result.get("values", [[]])
@@ -433,6 +479,27 @@ class ScorerDeployer:
             body={"values": [values]},
         ).execute()
 
+    def _delete_row(self, sheet_name: str, row: int):
+        meta = self._service.spreadsheets().get(spreadsheetId=self._sheet_id).execute()
+        sheet_id = next(
+            s["properties"]["sheetId"]
+            for s in meta["sheets"]
+            if s["properties"]["title"] == sheet_name
+        )
+        self._service.spreadsheets().batchUpdate(
+            spreadsheetId=self._sheet_id,
+            body={"requests": [{
+                "deleteDimension": {
+                    "range": {
+                        "sheetId":    sheet_id,
+                        "dimension":  "ROWS",
+                        "startIndex": row - 1,
+                        "endIndex":   row,
+                    }
+                }
+            }]}
+        ).execute()
+
     def _build_service(self):
         creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
         if not creds_path:
@@ -441,3 +508,32 @@ class ScorerDeployer:
             creds_path, scopes=SCOPES
         )
         return build("sheets", "v4", credentials=creds)
+    
+    def _center_row(self, sheet_name: str, row: int, num_cols: int):
+        """Center align all cells in a row."""
+        meta = self._service.spreadsheets().get(spreadsheetId=self._sheet_id).execute()
+        sheet_id = next(
+            s["properties"]["sheetId"]
+            for s in meta["sheets"]
+            if s["properties"]["title"] == sheet_name
+        )
+        self._service.spreadsheets().batchUpdate(
+            spreadsheetId=self._sheet_id,
+            body={"requests": [{
+                "repeatCell": {
+                    "range": {
+                        "sheetId":          sheet_id,
+                        "startRowIndex":    row - 1,
+                        "endRowIndex":      row,
+                        "startColumnIndex": 0,
+                        "endColumnIndex":   num_cols,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "horizontalAlignment": "CENTER"
+                        }
+                    },
+                    "fields": "userEnteredFormat.horizontalAlignment"
+                }
+            }]}
+        ).execute()

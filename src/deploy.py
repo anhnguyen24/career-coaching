@@ -2,13 +2,19 @@
 deploy.py — Survey deployment orchestrator
 
 Usage:
-    python deploy.py src/survey_versions/survey_v2.json           # run all steps
-    python deploy.py src/survey_versions/survey_v2.json --form    # only update Google Form
-    python deploy.py src/survey_versions/survey_v2.json --scorer  # only update Scores tab + test
-    python deploy.py src/survey_versions/survey_v2.json --test    # only run integration test
+    python src/deploy.py src/survey_versions/survey_v2.json           # run all steps
+    python src/deploy.py src/survey_versions/survey_v2.json --form    # only update Google Form questions
+    python src/deploy.py src/survey_versions/survey_v2.json --scorer  # inject permanent seed row + integration test
+    python src/deploy.py src/survey_versions/survey_v2.json --test    # integration test only (no permanent changes)
+
+Step summary:
+    --form    → validate + update Google Form questions (permanent)
+    --scorer  → validate + inject mock row + compare + keep if passed (permanent seed row)
+    --test    → validate + inject mock row + compare + delete regardless (nothing permanent)
+    no flags  → --form + --scorer + --test (all steps)
 
 Requirements:
-    pip install google-auth google-auth-oauthlib google-api-python-client jsonschema
+    pip install google-auth google-auth-oauthlib google-api-python-client jsonschema python-dotenv
 
 Environment variables (or .env file):
     GOOGLE_SERVICE_ACCOUNT_JSON   path to service account credentials JSON file
@@ -23,9 +29,9 @@ import json
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 from jsonschema import validate, ValidationError
 
-from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
@@ -84,8 +90,8 @@ def main():
     parser = argparse.ArgumentParser(description="Deploy survey to Google Form and Scores tab")
     parser.add_argument("survey_file", help="Path to survey JSON file")
     parser.add_argument("--form",   action="store_true", help="Only update Google Form questions")
-    parser.add_argument("--scorer", action="store_true", help="Only update Scores tab formulas + integration test")
-    parser.add_argument("--test",   action="store_true", help="Only run integration test")
+    parser.add_argument("--scorer", action="store_true", help="Inject permanent seed row + integration test")
+    parser.add_argument("--test",   action="store_true", help="Integration test only — no permanent changes")
     args = parser.parse_args()
 
     survey_path = Path(args.survey_file)
@@ -97,7 +103,7 @@ def main():
     run_all    = not (args.form or args.scorer or args.test)
     run_form   = run_all or args.form
     run_scorer = run_all or args.scorer
-    run_test   = run_all or args.scorer or args.test
+    run_test   = run_all or args.test
 
     print(f"\n🚀 Career Coaching Survey Deploy")
     print(f"   File:    {survey_path}")
@@ -115,19 +121,19 @@ def main():
         deployer = FormDeployer(survey)
         deployer.deploy()
 
-    # Step 3 — Deploy scorer (generate Scores tab formulas)
+    # Step 3 — Deploy scorer (permanent seed row + integration test)
     if run_scorer:
         print(f"\n{'='*60}")
-        print(f"  STEP 3 — Deploying Scores tab formulas")
+        print(f"  STEP 3 — Deploying Scores tab seed row")
         print(f"{'='*60}")
         from scorer.scorer_deployer import ScorerDeployer
         scorer_deployer = ScorerDeployer(survey)
         scorer_deployer.deploy_formulas()
 
-    # Step 4 — Integration test
+    # Step 4 — Integration test only (no permanent changes)
     if run_test:
         print(f"\n{'='*60}")
-        print(f"  STEP 4 — Running integration test")
+        print(f"  STEP 4 — Running integration test (temporary)")
         print(f"{'='*60}")
         if not run_scorer:
             from scorer.scorer_deployer import ScorerDeployer
