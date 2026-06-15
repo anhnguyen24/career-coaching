@@ -9,5 +9,4 @@ COPY server/ .
 COPY src/scorer/scorer.py services/scorer_engine.py
 COPY src/survey_versions/ src/survey_versions/
 
-RUN chmod +x start.sh
-CMD ["./start.sh"]
+CMD ["python", "start.py"]
