@@ -2,15 +2,18 @@
 server/routers/webhook.py — Webhook endpoints called by Apps Script
 
 POST /webhook/score
-    Receives token + 180 answers from Apps Script onFormSubmit
-    Runs scorer.py and returns all scores
-    Apps Script uses the returned scores to generate the Google Doc
+    Receives token + answers dict {question_number: score}
+    Returns structured scores with named keys
+
+POST /webhook/score-raw
+    Receives token + raw Form Responses row (full array)
+    Extracts answers automatically, returns same structured scores
+    Easier to call from Apps Script — just pass responseData directly
 """
 
 import os
-import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Any
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -20,8 +23,9 @@ from services.scorer import Scorer
 router = APIRouter()
 
 # ============================================================
-# Load survey from environment or default path
+# Survey auto-detection — always uses latest version
 # ============================================================
+
 def _get_latest_survey_path() -> Path:
     survey_dir = Path(__file__).parent.parent.parent / "src" / "survey_versions"
     survey_files = sorted(survey_dir.glob("survey_v*.json"))
@@ -29,93 +33,186 @@ def _get_latest_survey_path() -> Path:
         raise HTTPException(status_code=500, detail="No survey JSON found in src/survey_versions/")
     return survey_files[-1]
 
+
 def _get_scorer() -> Scorer:
     return Scorer.from_file(_get_latest_survey_path())
+
+
+def _get_survey_version() -> str:
+    path = _get_latest_survey_path()
+    # Extract version from filename e.g. survey_v2.json → v2
+    return path.stem.replace("survey_", "")
 
 
 # ============================================================
 # Auth — simple shared secret
 # ============================================================
+
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
-def _verify_secret(x_webhook_secret: str = Header(default="")):
-    if WEBHOOK_SECRET and x_webhook_secret != WEBHOOK_SECRET:
+
+def _verify_secret(secret: str):
+    if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 
 # ============================================================
-# Models
+# Column layout in Form Responses 2
+# Timestamp + 15 student info fields = 16 columns before Q1
+# ============================================================
+
+STUDENT_INFO_COLS = 16  # columns 0-15
+TOTAL_QUESTIONS   = 180
+
+
+# ============================================================
+# Request models
 # ============================================================
 
 class ScoreRequest(BaseModel):
     token: str
-    survey_version: str
-    answers: Dict[int, int]  # {question_number: score}
+    answers: Dict[int, int]
 
     class Config:
         json_schema_extra = {
             "example": {
                 "token": "HN-2026-0007",
-                "survey_version": "v2",
-                "answers": {
-                    1: 3, 2: 4, 3: 4
-                }
+                "answers": {1: 3, 2: 4, 3: 4}
             }
         }
 
 
-class AxisScore(BaseModel):
-    id: str
-    score: float
+class ScoreRawRequest(BaseModel):
+    token: str
+    response_row: List[Any]  # full row from Form Responses 2
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "HN-2026-0007",
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4]
+            }
+        }
 
 
-class MBTIAxisResult(BaseModel):
-    axis: str
-    group_a: AxisScore
-    group_b: AxisScore
+# ============================================================
+# Response models — named keys, no magic indices
+# ============================================================
+
+class MBTIAxis(BaseModel):
     winner: str
     gap: float
+    scores: Dict[str, float]   # e.g. {"E": 3.5, "I": 1.67}
 
 
-class MBTIScore(BaseModel):
-    type: str
+class MBTI(BaseModel):
+    type: str                  # e.g. "ENTP"
+    clarity: str               # e.g. "Khá rõ"
     gap_avg: float
-    clarity: str
     note: str
-    axes: list[MBTIAxisResult]
+    axes: Dict[str, MBTIAxis]  # e.g. {"EI": {...}, "SN": {...}}
 
 
-class GroupScore(BaseModel):
-    id: str
-    name: str
-    score: float
+class Holland(BaseModel):
+    top3: List[str]            # e.g. ["S", "A", "C"]
+    top3_label: str            # e.g. "SAC"
+    groups: Dict[str, float]   # e.g. {"R": 25, "I": 34, ...}
 
 
-class HollandScore(BaseModel):
-    top3: list[str]
-    top3_label: str
-    groups: list[GroupScore]
+class Ocean(BaseModel):
+    groups: Dict[str, float]   # e.g. {"O": 4.25, "C": 4.33, ...}
 
 
-class OceanScore(BaseModel):
-    groups: list[GroupScore]
+class SSSComponents(BaseModel):
+    mbti_social_score: float
+    ocean_e_avg: float
+    raw_social_score: float
 
 
-class CompositeScore(BaseModel):
-    id: str
-    name: str
-    label: str
+class SSS(BaseModel):
     score: float
     interpretation: str
+    components: SSSComponents
 
 
 class ScoreResponse(BaseModel):
     token: str
     survey_version: str
-    mbti: MBTIScore
-    holland: HollandScore
-    ocean: OceanScore
-    composite_scores: list[CompositeScore]
+    mbti: MBTI
+    holland: Holland
+    ocean: Ocean
+    sss: SSS
+
+
+# ============================================================
+# Shared scoring logic
+# ============================================================
+
+def _build_response(token: str, answers: Dict[int, int]) -> ScoreResponse:
+    """Run scorer and build the structured response."""
+    if len(answers) != TOTAL_QUESTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Expected {TOTAL_QUESTIONS} answers, got {len(answers)}"
+        )
+
+    try:
+        scorer  = _get_scorer()
+        result  = scorer.score(answers)
+        d       = result.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Scoring failed: {str(e)}")
+
+    mbti_d    = d.get("mbti", {})
+    holland_d = d.get("holland", {})
+    ocean_d   = d.get("ocean", {})
+    sss_d     = next((cs for cs in d.get("composite_scores", []) if cs["id"] == "sss"), {})
+
+    # Build MBTI axes dict
+    axes = {}
+    for ax in mbti_d.get("axes", []):
+        key = ax["group_a"]["id"] + ax["group_b"]["id"]   # e.g. "EI"
+        axes[key] = MBTIAxis(
+            winner=ax["winner"],
+            gap=ax["gap"],
+            scores={
+                ax["group_a"]["id"]: ax["group_a"]["score"],
+                ax["group_b"]["id"]: ax["group_b"]["score"],
+            }
+        )
+
+    # Build SSS components
+    components_raw = {c["source"]: c["raw_value"] for c in sss_d.get("components", [])}
+    sss_components = SSSComponents(
+        mbti_social_score=components_raw.get("bipolar_ratio", 0),
+        ocean_e_avg=components_raw.get("test_group", 0),
+        raw_social_score=components_raw.get("question_subset", 0),
+    )
+
+    return ScoreResponse(
+        token=token,
+        survey_version=_get_survey_version(),
+        mbti=MBTI(
+            type=mbti_d.get("type", ""),
+            clarity=mbti_d.get("clarity", ""),
+            gap_avg=mbti_d.get("gap_avg", 0),
+            note=mbti_d.get("note", ""),
+            axes=axes,
+        ),
+        holland=Holland(
+            top3=holland_d.get("top3", []),
+            top3_label=holland_d.get("top3_label", ""),
+            groups={g["id"]: g["score"] for g in holland_d.get("groups", [])},
+        ),
+        ocean=Ocean(
+            groups={g["id"]: g["score"] for g in ocean_d.get("groups", [])},
+        ),
+        sss=SSS(
+            score=sss_d.get("score", 0),
+            interpretation=sss_d.get("interpretation", ""),
+            components=sss_components,
+        ),
+    )
 
 
 # ============================================================
@@ -123,94 +220,68 @@ class ScoreResponse(BaseModel):
 # ============================================================
 
 @router.post("/score", response_model=ScoreResponse)
-def score_submission(
+def score(
     payload: ScoreRequest,
     x_webhook_secret: str = Header(default=""),
 ):
     """
-    Score a survey submission.
-
-    Called by Apps Script onFormSubmit with the student's 180 answers.
-    Returns all scores (MBTI, Holland, OCEAN, SSS) ready for doc generation.
+    Score a survey submission from a pre-built answers dict.
 
     Apps Script usage:
+        var answersObj = {};
+        for (var i = 0; i < 180; i++) {
+            answersObj[i + 1] = responseData[16 + i];
+        }
         var response = UrlFetchApp.fetch(SERVER_URL + '/webhook/score', {
+            method: 'post',
+            contentType: 'application/json',
+            headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
+            payload: JSON.stringify({ token: token, answers: answersObj })
+        });
+        var scores = JSON.parse(response.getContentText());
+        // Access: scores.mbti.type, scores.holland.top3_label, scores.sss.score
+    """
+    _verify_secret(x_webhook_secret)
+    return _build_response(payload.token, payload.answers)
+
+
+@router.post("/score-raw", response_model=ScoreResponse)
+def score_raw(
+    payload: ScoreRawRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    Score a survey submission from a raw Form Responses row.
+    Extracts answers from columns 16-195 automatically.
+
+    Apps Script usage (simplest — just pass the whole row):
+        var response = UrlFetchApp.fetch(SERVER_URL + '/webhook/score-raw', {
             method: 'post',
             contentType: 'application/json',
             headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
             payload: JSON.stringify({
                 token: token,
-                survey_version: 'v2',
-                answers: answersObj
+                response_row: responseData
             })
         });
         var scores = JSON.parse(response.getContentText());
+        // Access: scores.mbti.type, scores.holland.top3_label, scores.sss.score
     """
     _verify_secret(x_webhook_secret)
 
-    # Validate answer count
-    total_expected = 180
-    if len(payload.answers) != total_expected:
+    row = payload.response_row
+    expected_min = STUDENT_INFO_COLS + TOTAL_QUESTIONS
+
+    if len(row) < expected_min:
         raise HTTPException(
             status_code=400,
-            detail=f"Expected {total_expected} answers, got {len(payload.answers)}"
+            detail=f"Row too short: expected at least {expected_min} columns, got {len(row)}"
         )
 
-    # Run scorer
-    try:
-        scorer  = _get_scorer()
-        result  = scorer.score(payload.answers)
-        result_dict = result.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scoring failed: {str(e)}")
+    # Extract answers from columns 16-195 (0-based)
+    answers = {
+        i + 1: int(row[STUDENT_INFO_COLS + i])
+        for i in range(TOTAL_QUESTIONS)
+    }
 
-    # Build response
-    mbti = result_dict.get("mbti", {})
-    holland = result_dict.get("holland", {})
-    ocean = result_dict.get("ocean", {})
-    composites = result_dict.get("composite_scores", [])
-
-    return ScoreResponse(
-        token=payload.token,
-        survey_version=payload.survey_version,
-        mbti=MBTIScore(
-            type=mbti.get("type", ""),
-            gap_avg=mbti.get("gap_avg", 0),
-            clarity=mbti.get("clarity", ""),
-            note=mbti.get("note", ""),
-            axes=[
-                MBTIAxisResult(
-                    axis=ax["axis"],
-                    group_a=AxisScore(id=ax["group_a"]["id"], score=ax["group_a"]["score"]),
-                    group_b=AxisScore(id=ax["group_b"]["id"], score=ax["group_b"]["score"]),
-                    winner=ax["winner"],
-                    gap=ax["gap"],
-                )
-                for ax in mbti.get("axes", [])
-            ],
-        ),
-        holland=HollandScore(
-            top3=holland.get("top3", []),
-            top3_label=holland.get("top3_label", ""),
-            groups=[
-                GroupScore(id=g["id"], name=g["name"], score=g["score"])
-                for g in holland.get("groups", [])
-            ],
-        ),
-        ocean=OceanScore(
-            groups=[
-                GroupScore(id=g["id"], name=g["name"], score=g["score"])
-                for g in ocean.get("groups", [])
-            ],
-        ),
-        composite_scores=[
-            CompositeScore(
-                id=cs["id"],
-                name=cs["name"],
-                label=cs["label"],
-                score=cs["score"],
-                interpretation=cs["interpretation"],
-            )
-            for cs in composites
-        ],
-    )
+    return _build_response(payload.token, answers)
