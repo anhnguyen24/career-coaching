@@ -22,18 +22,15 @@ router = APIRouter()
 # ============================================================
 # Load survey from environment or default path
 # ============================================================
-SURVEY_PATH = Path(os.environ.get(
-    "SURVEY_JSON_PATH",
-    Path(__file__).parent.parent.parent / "src" / "survey_versions" / "survey_v2.json"
-))
+def _get_latest_survey_path() -> Path:
+    survey_dir = Path(__file__).parent.parent.parent / "src" / "survey_versions"
+    survey_files = sorted(survey_dir.glob("survey_v*.json"))
+    if not survey_files:
+        raise HTTPException(status_code=500, detail="No survey JSON found in src/survey_versions/")
+    return survey_files[-1]
 
 def _get_scorer() -> Scorer:
-    if not SURVEY_PATH.exists():
-        raise HTTPException(
-            status_code=500,
-            detail=f"Survey JSON not found at {SURVEY_PATH}"
-        )
-    return Scorer.from_file(SURVEY_PATH)
+    return Scorer.from_file(_get_latest_survey_path())
 
 
 # ============================================================
