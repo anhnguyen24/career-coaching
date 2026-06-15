@@ -13,6 +13,8 @@ app = FastAPI(
     title="Career Coaching API",
     description="Scoring and report generation for the GenZ career coaching platform",
     version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 app.include_router(health.router)
