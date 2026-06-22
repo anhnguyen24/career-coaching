@@ -27,26 +27,23 @@ router = APIRouter()
 # ============================================================
 
 def _get_latest_survey_path() -> Path:
-    # In Docker: /app is the working directory
-    # Repo structure: server/ and src/ are siblings
-    base = Path(__file__).parent.parent  # /app (server root)
-    survey_dir = base / "src" / "survey_versions"
-
-    # Fallback: try relative to working directory
-    if not survey_dir.exists():
-        survey_dir = Path("/app/src/survey_versions")
-
+    survey_dir = Path(__file__).parent.parent.parent / "src" / "survey_versions"
     survey_files = sorted(survey_dir.glob("survey_v*.json"))
     if not survey_files:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No survey JSON found in {survey_dir}"
-        )
+        raise HTTPException(status_code=500, detail="No survey JSON found in src/survey_versions/")
     return survey_files[-1]
 
 
+def _load_latest_survey() -> dict:
+    """Load the full survey JSON dict (used by both Scorer and DocGenerator)."""
+    import json
+    path = _get_latest_survey_path()
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _get_scorer() -> Scorer:
-    return Scorer.from_file(_get_latest_survey_path())
+    return Scorer(_load_latest_survey())
 
 
 def _get_survey_version() -> str:
@@ -296,3 +293,82 @@ def score_raw(
     }
 
     return _build_response(payload.token, answers)
+
+
+def _extract_answers_from_row(row: List[Any]) -> Dict[int, int]:
+    """Shared helper: extract the 180 answers from a raw response row."""
+    expected_min = STUDENT_INFO_COLS + TOTAL_QUESTIONS
+    if len(row) < expected_min:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Row too short: expected at least {expected_min} columns, got {len(row)}"
+        )
+    return {
+        i + 1: int(row[STUDENT_INFO_COLS + i])
+        for i in range(TOTAL_QUESTIONS)
+    }
+
+
+# ============================================================
+# Doc generation
+# ============================================================
+
+class GenerateDocRequest(BaseModel):
+    token: str
+    response_row: List[Any]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "HN-2026-0007",
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4]
+            }
+        }
+
+
+class GenerateDocResponse(BaseModel):
+    doc_url: str
+    scores: ScoreResponse
+
+
+@router.post("/generate-doc", response_model=GenerateDocResponse)
+def generate_doc(
+    payload: GenerateDocRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    Score a submission AND generate the consultant Google Doc in one call.
+
+    Apps Script usage:
+        var response = UrlFetchApp.fetch(SERVER_URL + '/webhook/generate-doc', {
+            method: 'post',
+            contentType: 'application/json',
+            headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
+            payload: JSON.stringify({ token: token, response_row: responseData })
+        });
+        var result = JSON.parse(response.getContentText());
+        // result.doc_url, result.scores.mbti.type, etc.
+    """
+    _verify_secret(x_webhook_secret)
+
+    from services.docs import DocGenerator, extract_student_info
+
+    row     = payload.response_row
+    answers = _extract_answers_from_row(row)
+    scores_response = _build_response(payload.token, answers)
+
+    student_info = extract_student_info(row)
+    survey       = _load_latest_survey()
+
+    try:
+        generator = DocGenerator(survey)
+        doc_url   = generator.generate(
+            token=payload.token,
+            student_info=student_info,
+            answers=answers,
+            scores=scores_response.model_dump(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Doc generation failed: {str(e)}")
+
+    return GenerateDocResponse(doc_url=doc_url, scores=scores_response)

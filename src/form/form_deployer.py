@@ -100,6 +100,61 @@ class FormDeployer:
 
         print(f"  ✅ Form questions updated successfully")
 
+    def check(self) -> bool:
+        """
+        Read-only comparison: does the live Google Form match survey JSON?
+        Never modifies the form. Returns True if fully in sync.
+        """
+        print(f"  Form ID: {self._form_id}")
+        print(f"  Questions in JSON: {len(self._questions)}")
+
+        form        = self._service.forms().get(formId=self._form_id).execute()
+        items       = form.get("items", [])
+        scale_items = [item for item in items if "scaleQuestion" in item.get("questionItem", {}).get("question", {})]
+
+        print(f"  Scale questions in live form: {len(scale_items)}")
+
+        if len(scale_items) != len(self._questions):
+            print(
+                f"  ❌ Count mismatch — form has {len(scale_items)}, "
+                f"JSON has {len(self._questions)}"
+            )
+            return False
+
+        mismatches = []
+        for i, (item, q) in enumerate(zip(scale_items, self._questions)):
+            current_title = item.get("title", "").strip()
+            current_desc  = item.get("description", "").strip()
+            expected_title = f"Câu {q['number']}"
+            expected_desc  = q["text"].strip()
+
+            if current_title != expected_title:
+                mismatches.append({
+                    "number": q["number"],
+                    "field": "title",
+                    "form": current_title,
+                    "json": expected_title,
+                })
+            if current_desc != expected_desc:
+                mismatches.append({
+                    "number": q["number"],
+                    "field": "text",
+                    "form": current_desc,
+                    "json": expected_desc,
+                })
+
+        if not mismatches:
+            print(f"  ✅ All {len(self._questions)} questions match exactly")
+            return True
+
+        print(f"  ❌ {len(mismatches)} mismatch(es) found:\n")
+        for m in mismatches:
+            print(f"  Câu {m['number']} ({m['field']}):")
+            print(f"    Form: {m['form']!r}")
+            print(f"    JSON: {m['json']!r}\n")
+
+        return False
+
     # ----------------------------------------------------------
     # Private
     # ----------------------------------------------------------
