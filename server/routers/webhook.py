@@ -27,11 +27,31 @@ router = APIRouter()
 # ============================================================
 
 def _get_latest_survey_path() -> Path:
-    survey_dir = Path(__file__).parent.parent.parent / "src" / "survey_versions"
-    survey_files = sorted(survey_dir.glob("survey_v*.json"))
-    if not survey_files:
-        raise HTTPException(status_code=500, detail="No survey JSON found in src/survey_versions/")
-    return survey_files[-1]
+    """
+    Find the latest survey_vN.json file. Tries multiple candidate
+    locations since the exact relative depth depends on how the
+    Docker image was built (and to be safe across local vs container).
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        Path("/app/src/survey_versions"),                     # Docker: WORKDIR /app, src/ copied alongside
+        here.parent.parent / "src" / "survey_versions",       # server/ as cwd: routers/.. -> server/src (rare)
+        here.parent.parent.parent / "src" / "survey_versions",# repo_root/src (local dev: repo_root/server/routers/..)
+        Path.cwd() / "src" / "survey_versions",                # fallback: relative to current working dir
+    ]
+
+    tried = []
+    for survey_dir in candidates:
+        tried.append(str(survey_dir))
+        if survey_dir.exists():
+            survey_files = sorted(survey_dir.glob("survey_v*.json"))
+            if survey_files:
+                return survey_files[-1]
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"No survey JSON found. Tried: {tried}"
+    )
 
 
 def _load_latest_survey() -> dict:
