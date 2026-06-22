@@ -89,10 +89,9 @@ def validate_survey(survey_path: Path) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Deploy survey to Google Form and Scores tab")
     parser.add_argument("survey_file", help="Path to survey JSON file")
-    parser.add_argument("--form",       action="store_true", help="Only update Google Form questions")
-    parser.add_argument("--scorer",     action="store_true", help="Inject permanent seed row + integration test")
-    parser.add_argument("--test",       action="store_true", help="Integration test only — no permanent changes")
-    parser.add_argument("--check-form", action="store_true", help="Read-only: compare live form vs JSON, no changes")
+    parser.add_argument("--form",   action="store_true", help="Only update Google Form questions")
+    parser.add_argument("--scorer", action="store_true", help="Inject permanent seed row + integration test")
+    parser.add_argument("--test",   action="store_true", help="Integration test only — no permanent changes")
     args = parser.parse_args()
 
     survey_path = Path(args.survey_file)
@@ -101,18 +100,6 @@ def main():
         sys.exit(1)
 
     # Determine which steps to run
-    # --check-form is a standalone read-only operation
-    if args.check_form:
-        survey = validate_survey(survey_path)
-
-        print(f"\n{'='*60}")
-        print(f"  CHECK — Comparing live Google Form vs {survey_path.name}")
-        print(f"{'='*60}")
-        from form.form_deployer import FormDeployer
-        deployer = FormDeployer(survey)
-        in_sync = deployer.check()
-        sys.exit(0 if in_sync else 1)
-
     run_all    = not (args.form or args.scorer or args.test)
     run_form   = run_all or args.form
     run_scorer = run_all or args.scorer
