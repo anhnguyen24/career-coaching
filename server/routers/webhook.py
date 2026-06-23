@@ -27,26 +27,43 @@ router = APIRouter()
 # ============================================================
 
 def _get_latest_survey_path() -> Path:
-    # In Docker: /app is the working directory
-    # Repo structure: server/ and src/ are siblings
-    base = Path(__file__).parent.parent  # /app (server root)
-    survey_dir = base / "src" / "survey_versions"
+    """
+    Find the latest survey_vN.json file. Tries multiple candidate
+    locations since the exact relative depth depends on how the
+    Docker image was built (and to be safe across local vs container).
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        Path("/app/src/survey_versions"),                     # Docker: WORKDIR /app, src/ copied alongside
+        here.parent.parent / "src" / "survey_versions",       # server/ as cwd: routers/.. -> server/src (rare)
+        here.parent.parent.parent / "src" / "survey_versions",# repo_root/src (local dev: repo_root/server/routers/..)
+        Path.cwd() / "src" / "survey_versions",                # fallback: relative to current working dir
+    ]
 
-    # Fallback: try relative to working directory
-    if not survey_dir.exists():
-        survey_dir = Path("/app/src/survey_versions")
+    tried = []
+    for survey_dir in candidates:
+        tried.append(str(survey_dir))
+        if survey_dir.exists():
+            survey_files = sorted(survey_dir.glob("survey_v*.json"))
+            if survey_files:
+                return survey_files[-1]
 
-    survey_files = sorted(survey_dir.glob("survey_v*.json"))
-    if not survey_files:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No survey JSON found in {survey_dir}"
-        )
-    return survey_files[-1]
+    raise HTTPException(
+        status_code=500,
+        detail=f"No survey JSON found. Tried: {tried}"
+    )
+
+
+def _load_latest_survey() -> dict:
+    """Load the full survey JSON dict (used by both Scorer and DocGenerator)."""
+    import json
+    path = _get_latest_survey_path()
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def _get_scorer() -> Scorer:
-    return Scorer.from_file(_get_latest_survey_path())
+    return Scorer(_load_latest_survey())
 
 
 def _get_survey_version() -> str:
@@ -296,3 +313,85 @@ def score_raw(
     }
 
     return _build_response(payload.token, answers)
+
+
+def _extract_answers_from_row(row: List[Any]) -> Dict[int, int]:
+    """Shared helper: extract the 180 answers from a raw response row."""
+    expected_min = STUDENT_INFO_COLS + TOTAL_QUESTIONS
+    if len(row) < expected_min:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Row too short: expected at least {expected_min} columns, got {len(row)}"
+        )
+    return {
+        i + 1: int(row[STUDENT_INFO_COLS + i])
+        for i in range(TOTAL_QUESTIONS)
+    }
+
+
+# ============================================================
+# TEST/DEV — full AI report generation with real Opus call
+# ============================================================
+
+class TestReportRequest(BaseModel):
+    token: str
+    response_row: List[Any]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "HN-2026-0007",
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4]
+            }
+        }
+
+
+class TestReportResponse(BaseModel):
+    report_text: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+
+
+@router.post("/test-report", response_model=TestReportResponse)
+def test_report(
+    payload: TestReportRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    DEV/TEST ONLY — calls the real Anthropic API directly with the full
+    career report SOP and real student scores, using Claude Opus with
+    a generous token budget (no artificial cap).
+
+    Use this to measure real cost and quality before committing to a
+    production architecture. NOT wired into the student-facing pipeline —
+    Apps Script still owns doc creation for now.
+
+    Requires ANTHROPIC_API_KEY environment variable on the server.
+    """
+    _verify_secret(x_webhook_secret)
+
+    row     = payload.response_row
+    answers = _extract_answers_from_row(row)
+    scores_response = _build_response(payload.token, answers)
+
+    student_info = {
+        "name":          row[1]  if len(row) > 1  else "",
+        "grade":         row[5]  if len(row) > 5  else "",
+        "school":        row[7]  if len(row) > 7  else "",
+        "direction":     row[11] if len(row) > 11 else "",
+        "after_school":  row[12] if len(row) > 12 else "",
+        "fav_subjects":  row[13] if len(row) > 13 else "",
+        "fav_activities":row[14] if len(row) > 14 else "",
+    }
+
+    from services.report import generate_report
+
+    try:
+        result = generate_report(student_info, scores_response.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+    return TestReportResponse(**result)
+

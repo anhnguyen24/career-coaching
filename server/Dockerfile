@@ -8,5 +8,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server/ .
 COPY src/scorer/scorer.py services/scorer_engine.py
 COPY src/survey_versions/ src/survey_versions/
+COPY src/prompts/ src/prompts/
 
 CMD ["python", "start.py"]
