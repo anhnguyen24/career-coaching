@@ -18,16 +18,31 @@ from typing import Any, Dict
 
 import anthropic
 
-SOP_PATH = Path(__file__).parent.parent.parent / "src" / "prompts" / "career_report_sop.md"
-
 MODEL      = "claude-opus-4-7"
 MAX_TOKENS = 8000
 
 
+def _get_sop_path() -> Path:
+    """
+    Find the SOP file. Tries multiple candidate locations since the
+    exact relative depth depends on how the Docker image was built.
+    """
+    here = Path(__file__).resolve()
+    candidates = [
+        Path("/app/src/prompts/career_report_sop.md"),
+        here.parent.parent / "src" / "prompts" / "career_report_sop.md",
+        here.parent.parent.parent / "src" / "prompts" / "career_report_sop.md",
+        Path.cwd() / "src" / "prompts" / "career_report_sop.md",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"SOP file not found. Tried: {[str(c) for c in candidates]}")
+
+
 def _load_sop() -> str:
-    if not SOP_PATH.exists():
-        raise FileNotFoundError(f"SOP file not found at {SOP_PATH}")
-    return SOP_PATH.read_text(encoding="utf-8")
+    path = _get_sop_path()
+    return path.read_text(encoding="utf-8")
 
 
 def build_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
