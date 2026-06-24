@@ -348,6 +348,7 @@ class TestReportRequest(BaseModel):
 
 class TestReportResponse(BaseModel):
     report_text: str
+    docx_base64: str | None = None
     model: str
     input_tokens: int
     output_tokens: int

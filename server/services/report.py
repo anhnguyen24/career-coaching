@@ -11,7 +11,10 @@ Requires:
     ANTHROPIC_API_KEY environment variable
 """
 
+import base64
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
@@ -158,6 +161,34 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
     )
 
 
+def markdown_to_docx_base64(markdown_text: str) -> str:
+    """
+    Convert markdown report text to a .docx file via pandoc,
+    return as base64 string ready to send over JSON.
+
+    Apps Script usage (decode + save to Drive — runs as real user,
+    so no service-account storage quota issue):
+
+        var bytes = Utilities.base64Decode(result.docx_base64);
+        var blob  = Utilities.newBlob(bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'BC_' + token + '.docx');
+        var file  = folder.createFile(blob);
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        md_path   = Path(tmp) / "report.md"
+        docx_path = Path(tmp) / "report.docx"
+        md_path.write_text(markdown_text, encoding="utf-8")
+
+        result = subprocess.run(
+            ["pandoc", str(md_path), "-o", str(docx_path)],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"pandoc conversion failed: {result.stderr}")
+
+        docx_bytes = docx_path.read_bytes()
+        return base64.b64encode(docx_bytes).decode("utf-8")
+
+
 def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -178,8 +209,15 @@ def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dic
     output_tokens = message.usage.output_tokens
     cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
 
+    try:
+        docx_base64 = markdown_to_docx_base64(text)
+    except Exception as e:
+        docx_base64 = None  # don't fail the whole request if pandoc has an issue
+        print(f"WARNING: docx conversion failed: {e}")
+
     return {
         "report_text": text,
+        "docx_base64": docx_base64,
         "model": MODEL,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
