@@ -18,7 +18,7 @@ from typing import Any, Dict
 import anthropic
 
 MODEL      = "claude-opus-4-7"
-MAX_TOKENS = 8000
+MAX_TOKENS = 12000
 
 PROMPTS_DIRNAME = "prompts"
 SOP_FILENAME           = "quy_trinh_chot_case.md"
@@ -114,6 +114,39 @@ ROUTER" phía trên (cùng với tài liệu bổ sung Trong Nước nếu có) 
 cá nhân đầy đủ cho học sinh này. Điền đúng route, chạy đúng chuỗi suy luận, không nhảy bước.
 Không bịa tên trường/chương trình/số liệu nếu không chắc. Không cắt ngắn để tiết kiệm độ dài
 — đây là báo cáo gửi gia đình thật.
+
+YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy trình ở trên):
+
+1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") trong [PHẦN A] hoặc [PHẦN B] gửi học sinh/phụ huynh.**
+   MBTI type chỉ được nêu tên trong [AUDIT NỘI BỘ]. Phần gửi gia đình chỉ tả tính cách bằng
+   ngôn ngữ thường ("em có xu hướng...", "em hợp kiểu..."), không gắn nhãn 4 chữ cái.
+
+2. **Xếp hạng major family/vùng nghề ưu tiên #1 phải tương ứng với mã Holland điểm cao nhất**
+   trong Top 3, trừ khi có lý do rõ từ OCEAN/SSS/bối cảnh để hạ xuống — nếu đảo thứ tự, phải
+   nêu lý do cụ thể trong [AUDIT NỘI BỘ].
+
+3. **Phải có [TÊN ĐỌC RIÊNG]** — một cụm từ ngắn (4-6 chữ), giàu hình ảnh, tóm gọn cách học
+   sinh tạo giá trị (không phải tên nghề, không phải nhãn tính cách). Sau tên, viết 2-3 câu
+   giải thích, làm rõ tên này không ép học sinh vào một nghề cố định.
+
+4. **Mỗi major family/vùng nghề đề xuất phải được đào sâu đầy đủ**, không chỉ liệt kê tên:
+   - Vì sao hợp (nối tới Holland/OCEAN/SSS/bối cảnh cụ thể của học sinh này)
+   - Ngành này học gì (course content thực tế, không bịa tên trường cụ thể)
+   - Việc thường gặp sau khi ra trường (5-8 việc cụ thể)
+   - Vai trò nghề có thể hướng tới (3-5 chức danh cụ thể)
+   - Mức ưu tiên (Rất cao / Cao / Khá cao / Có điều kiện / Trung bình) kèm lý do ngắn
+
+5. **Phải có "Application Story Themes"** trong Phần B — 3-4 trục câu chuyện cho personal
+   statement, mỗi trục 2-3 câu, gắn cụ thể vào dữ liệu/bối cảnh thật của học sinh này (không
+   viết chung chung kiểu "em rất thích giúp người").
+
+6. **Phải có "Hồ sơ nên có"** trong Phần B — personal statement nên xoay quanh chủ đề gì,
+   loại portfolio/hoạt động nên có, loại project nên làm, hướng thư giới thiệu nên nhấn vào
+   điều gì.
+
+7. **Phải có [LỜI KẾT GỬI PHỤ HUYNH]** ở cuối — đoạn ngắn (4-6 câu) tóm gọn tinh thần báo
+   cáo: đây là bản đồ mở không phải bản án; nhấn lại điểm mạnh cốt lõi; nhắc gia đình tránh
+   đẩy con theo hướng ngược với dữ liệu.
 """
 
     return (
