@@ -355,6 +355,49 @@ class TestReportResponse(BaseModel):
     estimated_cost_usd: float
 
 
+# ============================================================
+# TEST/DEV — markdown-to-docx conversion ONLY (no API call, free)
+# ============================================================
+
+class MarkdownToDocxRequest(BaseModel):
+    markdown_text: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "markdown_text": "# Hello\n\nThis is **bold** text.\n\n| A | B |\n|---|---|\n| 1 | 2 |"
+            }
+        }
+
+
+class MarkdownToDocxResponse(BaseModel):
+    docx_base64: str
+
+
+@router.post("/markdown-to-docx", response_model=MarkdownToDocxResponse)
+def markdown_to_docx(
+    payload: MarkdownToDocxRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    DEV/TEST ONLY — converts markdown text to a .docx file via pandoc,
+    no Anthropic API call involved (zero cost). Use this to verify the
+    pandoc pipeline runs correctly inside the deployed container, using
+    any markdown text you already have (e.g. a previously generated
+    report), without spending tokens on a new generation.
+    """
+    _verify_secret(x_webhook_secret)
+
+    from services.report import markdown_to_docx_base64
+
+    try:
+        docx_b64 = markdown_to_docx_base64(payload.markdown_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Docx conversion failed: {str(e)}")
+
+    return MarkdownToDocxResponse(docx_base64=docx_b64)
+
+
 @router.post("/test-report", response_model=TestReportResponse)
 def test_report(
     payload: TestReportRequest,
