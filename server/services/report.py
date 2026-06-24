@@ -18,7 +18,7 @@ from typing import Any, Dict
 import anthropic
 
 MODEL      = "claude-opus-4-7"
-MAX_TOKENS = 12000
+MAX_TOKENS = 20000
 
 PROMPTS_DIRNAME = "prompts"
 SOP_FILENAME           = "quy_trinh_chot_case.md"
