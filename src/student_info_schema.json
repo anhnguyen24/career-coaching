@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Student Info Form Schema",
+  "description": "Documents the exact structure of the main survey's student info section (the 16 columns before Q1 in Form Responses 2 / response_row). Source of truth for field order and exact dropdown option strings — update this file whenever the live Google Form changes, since route detection and other logic depend on exact string matches, not fuzzy keywords.",
+  "form_name": "Bộ Test Hướng Nghiệp GenZ American Dream",
+
+  "fields": [
+    {
+      "index": 0,
+      "key": "timestamp",
+      "label": "Timestamp",
+      "type": "datetime",
+      "note": "Auto-added by Google Forms, not a real question"
+    },
+    {
+      "index": 1,
+      "key": "name",
+      "label": "Họ và tên học sinh",
+      "type": "text",
+      "required": true
+    },
+    {
+      "index": 2,
+      "key": "token",
+      "label": "Mã token",
+      "type": "text",
+      "required": true,
+      "note": "Pre-filled via URL param, student instructed not to change it"
+    },
+    {
+      "index": 3,
+      "key": "dob",
+      "label": "Ngày/tháng/năm sinh",
+      "type": "date",
+      "required": true
+    },
+    {
+      "index": 4,
+      "key": "gender",
+      "label": "Giới tính",
+      "type": "dropdown",
+      "required": true,
+      "options": ["Nam", "Nữ", "Khác", "Không muốn trả lời"]
+    },
+    {
+      "index": 5,
+      "key": "grade",
+      "label": "Lớp hiện tại",
+      "type": "text",
+      "required": true
+    },
+    {
+      "index": 6,
+      "key": "school_year",
+      "label": "Năm học",
+      "type": "text",
+      "required": true
+    },
+    {
+      "index": 7,
+      "key": "school",
+      "label": "Trường",
+      "type": "text",
+      "required": true
+    },
+    {
+      "index": 8,
+      "key": "city",
+      "label": "Thành phố/Tỉnh",
+      "type": "text",
+      "required": true
+    },
+    {
+      "index": 9,
+      "key": "email",
+      "label": "Email học sinh",
+      "type": "text",
+      "required": false
+    },
+    {
+      "index": 10,
+      "key": "phone",
+      "label": "SĐT/Zalo phụ huynh",
+      "type": "text",
+      "required": false
+    },
+    {
+      "index": 11,
+      "key": "direction",
+      "label": "Bạn đang quan tâm hướng nào nhất?",
+      "type": "dropdown",
+      "required": true,
+      "options": [
+        "Chọn ngành đại học ở VN",
+        "Du học",
+        "Học nghề/College",
+        "Chưa rõ, đang tìm hiểu"
+      ],
+      "used_by": "report.py _detect_route() — exact match required, see ROUTE_BY_DIRECTION"
+    },
+    {
+      "index": 12,
+      "key": "after_school",
+      "label": "Dự định sau THPT (chọn 1–2 mục)",
+      "type": "multi_select",
+      "required": true,
+      "options": ["Đi học tiếp", "Đi làm sớm", "Kinh doanh", "Vừa học vừa làm", "Chưa biết"]
+    },
+    {
+      "index": 13,
+      "key": "fav_subjects",
+      "label": "3 môn bạn thấy \"hợp vibe\" nhất",
+      "type": "multi_select",
+      "required": true,
+      "options": ["Toán", "Lý", "Hoá", "Sinh", "Tin", "Văn", "Sử", "Địa", "Anh", "Khác"],
+      "note": "Student selects exactly 3"
+    },
+    {
+      "index": 14,
+      "key": "fav_activities",
+      "label": "3 hoạt động bạn thích làm nhất (ghi ngắn)",
+      "type": "text",
+      "required": true,
+      "note": "Free text, not a dropdown — student writes 3 short activities"
+    },
+    {
+      "index": 15,
+      "key": "commitment",
+      "label": "Cam kết mini: Khi làm bài, bạn sẽ chọn theo đúng đời thật (không \"diễn\")",
+      "type": "checkbox",
+      "required": true,
+      "options": ["Đồng ý"]
+    }
+  ],
+
+  "route_mapping": {
+    "_comment": "Mirrors ROUTE_BY_DIRECTION in server/services/report.py — keep in sync if the form's dropdown options ever change.",
+    "Du học": "A",
+    "Chọn ngành đại học ở VN": "B",
+    "Học nghề/College": "B",
+    "Chưa rõ, đang tìm hiểu": "C"
+  }
+}

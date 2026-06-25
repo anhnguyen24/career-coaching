@@ -30,11 +30,21 @@ SOP_FILENAME           = "quy_trinh_chot_case.md"
 MASTER_ROUTER_FILENAME  = "master_router_prompt.md"
 TRONG_NUOC_FILENAME     = "prompt_2_5_trong_nuoc.md"
 
-# Keywords used to detect route from the student's stated direction.
-# This is a simple heuristic — Master Router itself also reasons about
-# route internally, this just decides which extra file to attach.
-OVERSEAS_KEYWORDS  = ["du học", "nước ngoài", "mỹ", "us", "uk", "canada", "úc", "australia"]
-DOMESTIC_KEYWORDS  = ["trong nước", "việt nam", "học tiếp trong nước"]
+# Exact match against the live form's dropdown options for
+# "Bạn đang quan tâm hướng nào nhất?" — confirmed from the actual form
+# (not fuzzy keywords, to avoid silent misrouting if wording is close
+# but not identical, e.g. "Chọn ngành đại học ở VN" vs guessed "trong nước").
+#
+# NOTE: "Học nghề/College" is mapped to Route B (domestic) as a judgment
+# call — it's a domestic vocational/college track, but the SOP files may
+# not explicitly address vocational pathways the same way as university
+# pathways. Revisit if this doesn't read correctly in testing.
+ROUTE_BY_DIRECTION = {
+    "du học":                  "A",
+    "chọn ngành đại học ở vn": "B",
+    "học nghề/college":        "B",
+    "chưa rõ, đang tìm hiểu":  "C",
+}
 
 
 def _get_prompts_dir() -> Path:
@@ -63,13 +73,14 @@ def _read_file(filename: str) -> str:
 
 
 def _detect_route(direction: str) -> str:
-    """Lightweight route detection from the student's stated direction field."""
-    d = (direction or "").lower()
-    if any(kw in d for kw in OVERSEAS_KEYWORDS):
-        return "A"  # du học
-    if any(kw in d for kw in DOMESTIC_KEYWORDS):
-        return "B"  # trong nước
-    return "C"  # chưa rõ — Master Router handles this branch internally
+    """
+    Exact-match route detection against real form dropdown values.
+    Unknown/unexpected values default to "C" (chưa rõ) rather than
+    guessing — safer than silently misrouting, and Route C is already
+    designed to handle ambiguity per the SOP.
+    """
+    key = (direction or "").strip().lower()
+    return ROUTE_BY_DIRECTION.get(key, "C")
 
 
 def build_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
