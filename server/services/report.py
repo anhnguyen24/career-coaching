@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 import anthropic
+from docx import Document
+from docx.shared import Pt
 
 MODEL      = "claude-opus-4-7"
 MAX_TOKENS = 20000
@@ -161,6 +163,40 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
     )
 
 
+_REFERENCE_DOCX_CACHE: Path | None = None
+
+
+def _get_reference_docx() -> Path:
+    """
+    Build (once, cached) a minimal .docx with Arial set as the default
+    font for Normal and Heading styles. Used as pandoc's --reference-doc
+    so the converted report renders Vietnamese diacritics correctly —
+    Word's default theme font (Calibri/Cambria) has incomplete glyph
+    coverage for some Vietnamese characters.
+    """
+    global _REFERENCE_DOCX_CACHE
+    if _REFERENCE_DOCX_CACHE and _REFERENCE_DOCX_CACHE.exists():
+        return _REFERENCE_DOCX_CACHE
+
+    path = Path(tempfile.gettempdir()) / "an_du_reference.docx"
+
+    doc = Document()
+    styles = doc.styles
+
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(11)
+
+    for style_name in ["Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"]:
+        try:
+            styles[style_name].font.name = "Arial"
+        except KeyError:
+            pass
+
+    doc.save(path)
+    _REFERENCE_DOCX_CACHE = path
+    return path
+
+
 def markdown_to_docx_base64(markdown_text: str) -> str:
     """
     Convert markdown report text to a .docx file via pandoc,
@@ -178,8 +214,11 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
         docx_path = Path(tmp) / "report.docx"
         md_path.write_text(markdown_text, encoding="utf-8")
 
+        reference_doc = _get_reference_docx()
+
         result = subprocess.run(
-            ["pandoc", str(md_path), "-o", str(docx_path)],
+            ["pandoc", "-f", "markdown+hard_line_breaks", str(md_path),
+             "-o", str(docx_path), f"--reference-doc={reference_doc}"],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -187,6 +226,7 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
 
         docx_bytes = docx_path.read_bytes()
         return base64.b64encode(docx_bytes).decode("utf-8")
+
 
 
 def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
