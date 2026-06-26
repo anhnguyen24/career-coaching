@@ -21,6 +21,7 @@ from typing import Any, Dict, Generator
 
 import anthropic
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Pt
 
 MODEL      = "claude-opus-4-7"
@@ -178,20 +179,41 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
 _REFERENCE_DOCX_CACHE: Path | None = None
 
 
+def _force_font_no_theme(style, font_name: str) -> None:
+    """
+    Set a style's font to a literal font name AND strip any theme font
+    references (asciiTheme/hAnsiTheme/eastAsiaTheme/cstheme). Heading
+    styles in Word templates (including pandoc's default reference doc)
+    often carry ONLY a theme reference with no literal font at all —
+    setting style.font.name alone adds a literal override but leaves
+    the theme reference in place, and renderers can still follow the
+    theme instead. Verified by inspecting the actual generated XML:
+    without this, Heading styles kept asciiTheme="majorHAnsi" etc. and
+    rendered in the theme's font (Calibri-like) instead of Arial.
+    """
+    style.font.name = font_name
+    rPr = style.element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        return
+    for theme_attr in ["asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"]:
+        attr_qn = qn(f"w:{theme_attr}")
+        if attr_qn in rFonts.attrib:
+            del rFonts.attrib[attr_qn]
+    rFonts.set(qn("w:ascii"), font_name)
+    rFonts.set(qn("w:hAnsi"), font_name)
+    rFonts.set(qn("w:cs"), font_name)
+
+
 def _get_reference_docx() -> Path:
     """
     Build (once, cached) a .docx with Arial set as the default font for
     Normal and Heading styles, used as pandoc's --reference-doc.
 
-    IMPORTANT: starts from pandoc's OWN default reference doc (via
+    Starts from pandoc's OWN default reference doc (via
     `pandoc --print-default-data-file reference.docx`), not a blank
-    python-docx Document(). A blank python-docx document lacks proper
-    numbering.xml definitions, which silently breaks bullet/numbered
-    list rendering (items appear as plain paragraphs with no bullet
-    marker). Starting from pandoc's default and only touching the font
-    preserves its working list styles while still fixing the Vietnamese
-    diacritic issue (Word's default theme font has incomplete glyph
-    coverage for some Vietnamese characters).
+    python-docx Document() — a blank document lacks proper numbering.xml
+    definitions, which silently breaks bullet/numbered list rendering.
     """
     global _REFERENCE_DOCX_CACHE
     if _REFERENCE_DOCX_CACHE and _REFERENCE_DOCX_CACHE.exists():
@@ -210,16 +232,16 @@ def _get_reference_docx() -> Path:
     pandoc_default.write_bytes(result.stdout)
 
     doc = Document(str(pandoc_default))
-    styles = doc.styles
 
-    styles["Normal"].font.name = "Arial"
-    styles["Normal"].font.size = Pt(11)
-
-    for style_name in ["Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"]:
-        try:
-            styles[style_name].font.name = "Arial"
-        except KeyError:
-            pass
+    # Iterate by name rather than dict-style lookup (doc.styles["Heading 1"]
+    # raised KeyError on this specific template despite the style being
+    # present when iterated — a latent-style quirk in pandoc's reference doc).
+    target_names = {"Normal", "Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"}
+    for style in doc.styles:
+        if style.name in target_names:
+            _force_font_no_theme(style, "Arial")
+            if style.name == "Normal":
+                style.font.size = Pt(11)
 
     doc.save(path)
     _REFERENCE_DOCX_CACHE = path
