@@ -12,11 +12,12 @@ Requires:
 """
 
 import base64
+import json
 import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Generator
 
 import anthropic
 from docx import Document
@@ -240,25 +241,115 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
 
 
 
+def generate_report_stream(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Generator[str, None, None]:
+    """
+    True streaming version — yields each text chunk AS IT ARRIVES from
+    Anthropic, so the HTTP response itself carries continuous bytes the
+    whole time generation is running. This is what actually prevents an
+    idle-connection gateway timeout (Railway or otherwise): the previous
+    non-streaming-HTTP version called Anthropic with streaming internally
+    but still sent ZERO bytes to the client until everything finished —
+    which does nothing to keep an idle-timeout-based proxy from cutting
+    the connection.
+
+    Yields the report text progressively, then a final metadata block:
+
+        <report text, streamed chunk by chunk>
+
+        ===METADATA===
+        {"model": ..., "input_tokens": ..., "output_tokens": ..., "estimated_cost_usd": ...}
+
+    Does NOT include docx conversion — call /webhook/markdown-to-docx
+    separately with the collected text if you need the .docx file.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+
+    client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
+    prompt = build_prompt(student_info, scores)
+
+    print(f"=== Starting streaming generation for {student_info.get('name', '')} "
+          f"(prompt length: {len(prompt)} chars) ===")
+
+    full_text_parts = []
+    with client.messages.stream(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        for chunk in stream.text_stream:
+            full_text_parts.append(chunk)
+            yield chunk  # real bytes flow to the HTTP client immediately
+        final_message = stream.get_final_message()
+
+    text = "".join(full_text_parts)
+    input_tokens  = final_message.usage.input_tokens
+    output_tokens = final_message.usage.output_tokens
+    cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
+
+    print(f"=== REPORT GENERATED — name={student_info.get('name', '')} "
+          f"input_tokens={input_tokens} output_tokens={output_tokens} "
+          f"cost_usd={round(cost, 4)} ===")
+    print("=== REPORT TEXT START ===")
+    print(text)
+    print("=== REPORT TEXT END ===")
+
+    metadata = {
+        "model": MODEL,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": round(cost, 4),
+    }
+    yield "\n\n===METADATA===\n" + json.dumps(metadata, ensure_ascii=False)
+
+
 def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    # Explicit generous timeout (default client timeout can be too short
+    # for long generations like this — Anthropic recommends streaming +
+    # an explicit timeout for any request expected to run several minutes).
+    client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
     prompt = build_prompt(student_info, scores)
 
-    message = client.messages.create(
+    print(f"=== Starting generation for {student_info.get('name', '')} "
+          f"(prompt length: {len(prompt)} chars) ===")
+
+    # Stream the response instead of a single synchronous create() call —
+    # this is Anthropic's documented recommendation for long-running
+    # generations (full SOP + Master Router can push this well past a
+    # minute), and avoids edge cases where a long non-streaming call
+    # gets dropped before the final response is assembled.
+    with client.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        for _ in stream.text_stream:
+            pass  # could log incremental progress here if needed
+        final_message = stream.get_final_message()
 
-    text = "".join(block.text for block in message.content if block.type == "text")
+    text = "".join(block.text for block in final_message.content if block.type == "text")
 
-    input_tokens  = message.usage.input_tokens
-    output_tokens = message.usage.output_tokens
+    input_tokens  = final_message.usage.input_tokens
+    output_tokens = final_message.usage.output_tokens
     cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
+
+    # Defensive logging — print the full result to stdout (visible in
+    # Railway's log viewer) the moment generation succeeds, BEFORE any
+    # downstream step (docx conversion, HTTP response transport) that
+    # could fail or time out. Without this, a gateway timeout after a
+    # successful (and billed) Anthropic call would lose the output
+    # entirely with no way to recover it.
+    print(f"=== REPORT GENERATED — token={student_info.get('name', '')} "
+          f"input_tokens={input_tokens} output_tokens={output_tokens} "
+          f"cost_usd={round(cost, 4)} ===")
+    print("=== REPORT TEXT START ===")
+    print(text)
+    print("=== REPORT TEXT END ===")
 
     try:
         docx_base64 = markdown_to_docx_base64(text)
