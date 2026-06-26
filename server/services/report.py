@@ -180,19 +180,36 @@ _REFERENCE_DOCX_CACHE: Path | None = None
 
 def _get_reference_docx() -> Path:
     """
-    Build (once, cached) a minimal .docx with Arial set as the default
-    font for Normal and Heading styles. Used as pandoc's --reference-doc
-    so the converted report renders Vietnamese diacritics correctly —
-    Word's default theme font (Calibri/Cambria) has incomplete glyph
-    coverage for some Vietnamese characters.
+    Build (once, cached) a .docx with Arial set as the default font for
+    Normal and Heading styles, used as pandoc's --reference-doc.
+
+    IMPORTANT: starts from pandoc's OWN default reference doc (via
+    `pandoc --print-default-data-file reference.docx`), not a blank
+    python-docx Document(). A blank python-docx document lacks proper
+    numbering.xml definitions, which silently breaks bullet/numbered
+    list rendering (items appear as plain paragraphs with no bullet
+    marker). Starting from pandoc's default and only touching the font
+    preserves its working list styles while still fixing the Vietnamese
+    diacritic issue (Word's default theme font has incomplete glyph
+    coverage for some Vietnamese characters).
     """
     global _REFERENCE_DOCX_CACHE
     if _REFERENCE_DOCX_CACHE and _REFERENCE_DOCX_CACHE.exists():
         return _REFERENCE_DOCX_CACHE
 
-    path = Path(tempfile.gettempdir()) / "an_du_reference.docx"
+    tmp_dir = Path(tempfile.gettempdir())
+    pandoc_default = tmp_dir / "an_du_pandoc_default.docx"
+    path = tmp_dir / "an_du_reference.docx"
 
-    doc = Document()
+    result = subprocess.run(
+        ["pandoc", "--print-default-data-file", "reference.docx"],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to get pandoc default reference doc: {result.stderr}")
+    pandoc_default.write_bytes(result.stdout)
+
+    doc = Document(str(pandoc_default))
     styles = doc.styles
 
     styles["Normal"].font.name = "Arial"
