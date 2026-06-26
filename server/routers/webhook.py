@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 from fastapi import APIRouter, HTTPException, Header
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services.scorer import Scorer
@@ -396,6 +397,53 @@ def markdown_to_docx(
         raise HTTPException(status_code=500, detail=f"Docx conversion failed: {str(e)}")
 
     return MarkdownToDocxResponse(docx_base64=docx_b64)
+
+
+@router.post("/test-report-stream")
+def test_report_stream(
+    payload: TestReportRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    DEV/TEST ONLY — same as /test-report but streams the response as it
+    generates, instead of waiting for the whole thing then sending one
+    blob. This keeps real bytes flowing to the client the entire time,
+    which avoids idle-connection gateway timeouts on long Route B
+    generations (the non-streaming version waited several minutes
+    sending nothing, which some proxies treat as a dead connection).
+
+    Returns plain text: the report streamed chunk by chunk, followed by
+    a "===METADATA===" marker and a JSON blob with token usage/cost.
+
+    Does NOT return docx_base64 — call /webhook/markdown-to-docx
+    separately with the collected report text if you need the .docx.
+    """
+    _verify_secret(x_webhook_secret)
+
+    row     = payload.response_row
+    answers = _extract_answers_from_row(row)
+    scores_response = _build_response(payload.token, answers)
+
+    student_info = {
+        "name":          row[1]  if len(row) > 1  else "",
+        "grade":         row[5]  if len(row) > 5  else "",
+        "school":        row[7]  if len(row) > 7  else "",
+        "direction":     row[11] if len(row) > 11 else "",
+        "after_school":  row[12] if len(row) > 12 else "",
+        "fav_subjects":  row[13] if len(row) > 13 else "",
+        "fav_activities":row[14] if len(row) > 14 else "",
+    }
+
+    from services.report import generate_report_stream
+
+    def stream_wrapper():
+        try:
+            for chunk in generate_report_stream(student_info, scores_response.model_dump()):
+                yield chunk
+        except Exception as e:
+            yield f"\n\n===ERROR===\n{str(e)}"
+
+    return StreamingResponse(stream_wrapper(), media_type="text/plain")
 
 
 @router.post("/test-report", response_model=TestReportResponse)

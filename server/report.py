@@ -12,11 +12,12 @@ Requires:
 """
 
 import base64
+import json
 import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Generator
 
 import anthropic
 from docx import Document
@@ -238,6 +239,69 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
         docx_bytes = docx_path.read_bytes()
         return base64.b64encode(docx_bytes).decode("utf-8")
 
+
+
+def generate_report_stream(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Generator[str, None, None]:
+    """
+    True streaming version — yields each text chunk AS IT ARRIVES from
+    Anthropic, so the HTTP response itself carries continuous bytes the
+    whole time generation is running. This is what actually prevents an
+    idle-connection gateway timeout (Railway or otherwise): the previous
+    non-streaming-HTTP version called Anthropic with streaming internally
+    but still sent ZERO bytes to the client until everything finished —
+    which does nothing to keep an idle-timeout-based proxy from cutting
+    the connection.
+
+    Yields the report text progressively, then a final metadata block:
+
+        <report text, streamed chunk by chunk>
+
+        ===METADATA===
+        {"model": ..., "input_tokens": ..., "output_tokens": ..., "estimated_cost_usd": ...}
+
+    Does NOT include docx conversion — call /webhook/markdown-to-docx
+    separately with the collected text if you need the .docx file.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
+
+    client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
+    prompt = build_prompt(student_info, scores)
+
+    print(f"=== Starting streaming generation for {student_info.get('name', '')} "
+          f"(prompt length: {len(prompt)} chars) ===")
+
+    full_text_parts = []
+    with client.messages.stream(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        for chunk in stream.text_stream:
+            full_text_parts.append(chunk)
+            yield chunk  # real bytes flow to the HTTP client immediately
+        final_message = stream.get_final_message()
+
+    text = "".join(full_text_parts)
+    input_tokens  = final_message.usage.input_tokens
+    output_tokens = final_message.usage.output_tokens
+    cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
+
+    print(f"=== REPORT GENERATED — name={student_info.get('name', '')} "
+          f"input_tokens={input_tokens} output_tokens={output_tokens} "
+          f"cost_usd={round(cost, 4)} ===")
+    print("=== REPORT TEXT START ===")
+    print(text)
+    print("=== REPORT TEXT END ===")
+
+    metadata = {
+        "model": MODEL,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": round(cost, 4),
+    }
+    yield "\n\n===METADATA===\n" + json.dumps(metadata, ensure_ascii=False)
 
 
 def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
