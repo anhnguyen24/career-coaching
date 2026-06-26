@@ -11,25 +11,40 @@ Requires:
     ANTHROPIC_API_KEY environment variable
 """
 
+import base64
 import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 import anthropic
+from docx import Document
+from docx.shared import Pt
 
 MODEL      = "claude-opus-4-7"
-MAX_TOKENS = 8000
+MAX_TOKENS = 20000
 
 PROMPTS_DIRNAME = "prompts"
 SOP_FILENAME           = "quy_trinh_chot_case.md"
 MASTER_ROUTER_FILENAME  = "master_router_prompt.md"
 TRONG_NUOC_FILENAME     = "prompt_2_5_trong_nuoc.md"
 
-# Keywords used to detect route from the student's stated direction.
-# This is a simple heuristic — Master Router itself also reasons about
-# route internally, this just decides which extra file to attach.
-OVERSEAS_KEYWORDS  = ["du học", "nước ngoài", "mỹ", "us", "uk", "canada", "úc", "australia"]
-DOMESTIC_KEYWORDS  = ["trong nước", "việt nam", "học tiếp trong nước"]
+# Exact match against the live form's dropdown options for
+# "Bạn đang quan tâm hướng nào nhất?" — confirmed from the actual form
+# (not fuzzy keywords, to avoid silent misrouting if wording is close
+# but not identical, e.g. "Chọn ngành đại học ở VN" vs guessed "trong nước").
+#
+# NOTE: "Học nghề/College" is mapped to Route B (domestic) as a judgment
+# call — it's a domestic vocational/college track, but the SOP files may
+# not explicitly address vocational pathways the same way as university
+# pathways. Revisit if this doesn't read correctly in testing.
+ROUTE_BY_DIRECTION = {
+    "du học":                  "A",
+    "chọn ngành đại học ở vn": "B",
+    "học nghề/college":        "B",
+    "chưa rõ, đang tìm hiểu":  "C",
+}
 
 
 def _get_prompts_dir() -> Path:
@@ -58,13 +73,14 @@ def _read_file(filename: str) -> str:
 
 
 def _detect_route(direction: str) -> str:
-    """Lightweight route detection from the student's stated direction field."""
-    d = (direction or "").lower()
-    if any(kw in d for kw in OVERSEAS_KEYWORDS):
-        return "A"  # du học
-    if any(kw in d for kw in DOMESTIC_KEYWORDS):
-        return "B"  # trong nước
-    return "C"  # chưa rõ — Master Router handles this branch internally
+    """
+    Exact-match route detection against real form dropdown values.
+    Unknown/unexpected values default to "C" (chưa rõ) rather than
+    guessing — safer than silently misrouting, and Route C is already
+    designed to handle ambiguity per the SOP.
+    """
+    key = (direction or "").strip().lower()
+    return ROUTE_BY_DIRECTION.get(key, "C")
 
 
 def build_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
@@ -114,6 +130,39 @@ ROUTER" phía trên (cùng với tài liệu bổ sung Trong Nước nếu có) 
 cá nhân đầy đủ cho học sinh này. Điền đúng route, chạy đúng chuỗi suy luận, không nhảy bước.
 Không bịa tên trường/chương trình/số liệu nếu không chắc. Không cắt ngắn để tiết kiệm độ dài
 — đây là báo cáo gửi gia đình thật.
+
+YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy trình ở trên):
+
+1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") trong [PHẦN A] hoặc [PHẦN B] gửi học sinh/phụ huynh.**
+   MBTI type chỉ được nêu tên trong [AUDIT NỘI BỘ]. Phần gửi gia đình chỉ tả tính cách bằng
+   ngôn ngữ thường ("em có xu hướng...", "em hợp kiểu..."), không gắn nhãn 4 chữ cái.
+
+2. **Xếp hạng major family/vùng nghề ưu tiên #1 phải tương ứng với mã Holland điểm cao nhất**
+   trong Top 3, trừ khi có lý do rõ từ OCEAN/SSS/bối cảnh để hạ xuống — nếu đảo thứ tự, phải
+   nêu lý do cụ thể trong [AUDIT NỘI BỘ].
+
+3. **Phải có [TÊN ĐỌC RIÊNG]** — một cụm từ ngắn (4-6 chữ), giàu hình ảnh, tóm gọn cách học
+   sinh tạo giá trị (không phải tên nghề, không phải nhãn tính cách). Sau tên, viết 2-3 câu
+   giải thích, làm rõ tên này không ép học sinh vào một nghề cố định.
+
+4. **Mỗi major family/vùng nghề đề xuất phải được đào sâu đầy đủ**, không chỉ liệt kê tên:
+   - Vì sao hợp (nối tới Holland/OCEAN/SSS/bối cảnh cụ thể của học sinh này)
+   - Ngành này học gì (course content thực tế, không bịa tên trường cụ thể)
+   - Việc thường gặp sau khi ra trường (5-8 việc cụ thể)
+   - Vai trò nghề có thể hướng tới (3-5 chức danh cụ thể)
+   - Mức ưu tiên (Rất cao / Cao / Khá cao / Có điều kiện / Trung bình) kèm lý do ngắn
+
+5. **Phải có "Application Story Themes"** trong Phần B — 3-4 trục câu chuyện cho personal
+   statement, mỗi trục 2-3 câu, gắn cụ thể vào dữ liệu/bối cảnh thật của học sinh này (không
+   viết chung chung kiểu "em rất thích giúp người").
+
+6. **Phải có "Hồ sơ nên có"** trong Phần B — personal statement nên xoay quanh chủ đề gì,
+   loại portfolio/hoạt động nên có, loại project nên làm, hướng thư giới thiệu nên nhấn vào
+   điều gì.
+
+7. **Phải có [LỜI KẾT GỬI PHỤ HUYNH]** ở cuối — đoạn ngắn (4-6 câu) tóm gọn tinh thần báo
+   cáo: đây là bản đồ mở không phải bản án; nhấn lại điểm mạnh cốt lõi; nhắc gia đình tránh
+   đẩy con theo hướng ngược với dữ liệu.
 """
 
     return (
@@ -123,6 +172,72 @@ Không bịa tên trường/chương trình/số liệu nếu không chắc. Kh�
         "\n\n---\n\n# TÀI LIỆU 3 — DỮ LIỆU HỌC SINH VÀ NHIỆM VỤ\n\n" + filled_fields +
         "\n\n" + task
     )
+
+
+_REFERENCE_DOCX_CACHE: Path | None = None
+
+
+def _get_reference_docx() -> Path:
+    """
+    Build (once, cached) a minimal .docx with Arial set as the default
+    font for Normal and Heading styles. Used as pandoc's --reference-doc
+    so the converted report renders Vietnamese diacritics correctly —
+    Word's default theme font (Calibri/Cambria) has incomplete glyph
+    coverage for some Vietnamese characters.
+    """
+    global _REFERENCE_DOCX_CACHE
+    if _REFERENCE_DOCX_CACHE and _REFERENCE_DOCX_CACHE.exists():
+        return _REFERENCE_DOCX_CACHE
+
+    path = Path(tempfile.gettempdir()) / "an_du_reference.docx"
+
+    doc = Document()
+    styles = doc.styles
+
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(11)
+
+    for style_name in ["Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"]:
+        try:
+            styles[style_name].font.name = "Arial"
+        except KeyError:
+            pass
+
+    doc.save(path)
+    _REFERENCE_DOCX_CACHE = path
+    return path
+
+
+def markdown_to_docx_base64(markdown_text: str) -> str:
+    """
+    Convert markdown report text to a .docx file via pandoc,
+    return as base64 string ready to send over JSON.
+
+    Apps Script usage (decode + save to Drive — runs as real user,
+    so no service-account storage quota issue):
+
+        var bytes = Utilities.base64Decode(result.docx_base64);
+        var blob  = Utilities.newBlob(bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'BC_' + token + '.docx');
+        var file  = folder.createFile(blob);
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        md_path   = Path(tmp) / "report.md"
+        docx_path = Path(tmp) / "report.docx"
+        md_path.write_text(markdown_text, encoding="utf-8")
+
+        reference_doc = _get_reference_docx()
+
+        result = subprocess.run(
+            ["pandoc", "-f", "markdown+hard_line_breaks", str(md_path),
+             "-o", str(docx_path), f"--reference-doc={reference_doc}"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"pandoc conversion failed: {result.stderr}")
+
+        docx_bytes = docx_path.read_bytes()
+        return base64.b64encode(docx_bytes).decode("utf-8")
+
 
 
 def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,8 +260,28 @@ def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dic
     output_tokens = message.usage.output_tokens
     cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
 
+    # Defensive logging — print the full result to stdout (visible in
+    # Railway's log viewer) the moment generation succeeds, BEFORE any
+    # downstream step (docx conversion, HTTP response transport) that
+    # could fail or time out. Without this, a gateway timeout after a
+    # successful (and billed) Anthropic call would lose the output
+    # entirely with no way to recover it.
+    print(f"=== REPORT GENERATED — token={student_info.get('name', '')} "
+          f"input_tokens={input_tokens} output_tokens={output_tokens} "
+          f"cost_usd={round(cost, 4)} ===")
+    print("=== REPORT TEXT START ===")
+    print(text)
+    print("=== REPORT TEXT END ===")
+
+    try:
+        docx_base64 = markdown_to_docx_base64(text)
+    except Exception as e:
+        docx_base64 = None  # don't fail the whole request if pandoc has an issue
+        print(f"WARNING: docx conversion failed: {e}")
+
     return {
         "report_text": text,
+        "docx_base64": docx_base64,
         "model": MODEL,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
