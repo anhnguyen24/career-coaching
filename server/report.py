@@ -245,19 +245,33 @@ def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dic
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    # Explicit generous timeout (default client timeout can be too short
+    # for long generations like this — Anthropic recommends streaming +
+    # an explicit timeout for any request expected to run several minutes).
+    client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
     prompt = build_prompt(student_info, scores)
 
-    message = client.messages.create(
+    print(f"=== Starting generation for {student_info.get('name', '')} "
+          f"(prompt length: {len(prompt)} chars) ===")
+
+    # Stream the response instead of a single synchronous create() call —
+    # this is Anthropic's documented recommendation for long-running
+    # generations (full SOP + Master Router can push this well past a
+    # minute), and avoids edge cases where a long non-streaming call
+    # gets dropped before the final response is assembled.
+    with client.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        for _ in stream.text_stream:
+            pass  # could log incremental progress here if needed
+        final_message = stream.get_final_message()
 
-    text = "".join(block.text for block in message.content if block.type == "text")
+    text = "".join(block.text for block in final_message.content if block.type == "text")
 
-    input_tokens  = message.usage.input_tokens
-    output_tokens = message.usage.output_tokens
+    input_tokens  = final_message.usage.input_tokens
+    output_tokens = final_message.usage.output_tokens
     cost = (input_tokens / 1_000_000 * 5) + (output_tokens / 1_000_000 * 25)
 
     # Defensive logging — print the full result to stdout (visible in
