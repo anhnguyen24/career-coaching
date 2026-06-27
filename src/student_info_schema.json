@@ -139,5 +139,19 @@
     "Chọn ngành đại học ở VN": "B",
     "Học nghề/College": "B",
     "Chưa rõ, đang tìm hiểu": "C"
+  },
+
+  "trailing_fields": {
+    "_comment": "Fields added AFTER Câu 180 (index 195). Google Forms appends new questions at the end of the response sheet regardless of where they're positioned in the form itself — confirmed empirically by testing on a duplicate form before adding to production. Safe to add new fields here without disturbing any fixed index (STUDENT_INFO_COLS, TOTAL_QUESTIONS, Q1-Q180 positions all stay unchanged).",
+    "fields": [
+      {
+        "index": 196,
+        "key": "transcript_attachment",
+        "label": "Bảng Điểm (nếu có)",
+        "type": "file_upload",
+        "required": false,
+        "note": "Google Forms puts ALL uploaded files for this question into a SINGLE cell as a comma-separated list of Drive URLs (format: 'https://drive.google.com/open?id=XXXX, https://drive.google.com/open?id=YYYY'), not separate columns. Each URL points to a Drive file ID — the URL alone has no readable content; fetching the actual file bytes requires a separate Drive API call. Not currently read by the scoring pipeline (_extract_answers_from_row only reads columns 16-195) — reserved for future use as supporting evidence in AI report generation."
+      }
+    ]
   }
 }
