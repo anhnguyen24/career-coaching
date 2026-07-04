@@ -170,6 +170,15 @@ Chọn cluster gần nhất với Portrait A nhưng khác trọng tâm, dựa tr
 Portrait C – Tension/Check:
 Chọn cluster phản ánh vùng lệch, vùng mâu thuẫn hoặc vùng có thể bị test bỏ sót.
 
+QUY TẮC CHỌN CLUSTER CHO B VÀ C (bắt buộc):
+Khi một chữ Holland (không phải chữ top) nằm trong khoảng ~3 điểm so với chữ top, PHẢI dùng đúng cluster đặc trưng của chữ đó trong thư viện — không được thay bằng một cluster nội dung/giao tiếp chung chung chỉ vì nó "nghe an toàn hơn". Ví dụ:
+
+- Nếu E sát A/I/S → dùng Action Connector hoặc Market Builder (năng lượng xã hội, hành động, thuyết phục) — không dùng Learning Content Builder trừ khi có tín hiệu học liệu/giáo dục rõ ràng trong raw response hoặc học bạ.
+- Nếu R hoặc I sát chữ top nhưng không được raw response xác nhận trực tiếp, mà học bạ có tín hiệu kỹ thuật/logic (Toán, Tin, Lý...) → đây chính là dấu hiệu "test có thể bỏ sót" — dùng Technical Builder hoặc Data/Pattern Finder cho Portrait C, không dùng Adaptive Generalist. Chỉ dùng Adaptive Generalist khi THỰC SỰ không có tín hiệu học bạ/raw nào nghiêng hẳn về một cluster cụ thể nào.
+- Portrait C không phải là "phiên bản mờ/lưng chừng của A". Portrait C phải là một giả thuyết cụ thể, có tên cluster rõ ràng, dù dùng để kiểm chứng chứ không phải để chốt.
+
+Có thể dùng các cluster sau:
+
 Có thể dùng các cluster sau:
 
 - Deep Analyst.
