@@ -487,3 +487,75 @@ def test_report(
 
     return TestReportResponse(**result)
 
+
+# ============================================================
+# Mirror Check — portrait generation
+# ============================================================
+
+class GeneratePortraitsRequest(BaseModel):
+    token: str
+    response_row: List[Any]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "HN-2026-0007",
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4]
+            }
+        }
+
+
+class GeneratePortraitsResponse(BaseModel):
+    portrait_text: str
+    score_matched: str | None
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+
+
+@router.post("/generate-portraits", response_model=GeneratePortraitsResponse)
+def generate_portraits(
+    payload: GeneratePortraitsRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    Generate 3 micro-portraits for the Mirror Check step.
+
+    Takes the same response_row format as /webhook/score-raw.
+    Scores the submission internally, then calls Claude Sonnet to
+    generate Portrait A (score-matched), Portrait B (neighbor), and
+    Portrait C (tension/check) per the An Du / META64 SOP.
+
+    Returns the full 4-section portrait text and which portrait (A/B/C)
+    the system considers score-matched — needed later to compute Mirror Fit
+    when the student returns their choice via the Mirror Check Google Form.
+
+    Cost: ~$0.05–$0.10 per call (much cheaper than full report generation).
+    """
+    _verify_secret(x_webhook_secret)
+
+    row     = payload.response_row
+    answers = _extract_answers_from_row(row)
+    scores_response = _build_response(payload.token, answers)
+
+    student_info = {
+        "name":          row[1]  if len(row) > 1  else "",
+        "grade":         row[5]  if len(row) > 5  else "",
+        "school":        row[7]  if len(row) > 7  else "",
+        "direction":     row[11] if len(row) > 11 else "",
+        "after_school":  row[12] if len(row) > 12 else "",
+        "fav_subjects":  row[13] if len(row) > 13 else "",
+        "fav_activities":row[14] if len(row) > 14 else "",
+    }
+
+    from services.portraits import generate_portraits as _gen_portraits
+
+    try:
+        result = _gen_portraits(student_info, scores_response.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Portrait generation failed: {str(e)}")
+
+    return GeneratePortraitsResponse(**result)
+
+
