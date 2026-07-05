@@ -28,17 +28,12 @@ router = APIRouter()
 # ============================================================
 
 def _get_latest_survey_path() -> Path:
-    """
-    Find the latest survey_vN.json file. Tries multiple candidate
-    locations since the exact relative depth depends on how the
-    Docker image was built (and to be safe across local vs container).
-    """
     here = Path(__file__).resolve()
     candidates = [
-        Path("/app/src/survey_versions"),                     # Docker: WORKDIR /app, src/ copied alongside
-        here.parent.parent / "src" / "survey_versions",       # server/ as cwd: routers/.. -> server/src (rare)
-        here.parent.parent.parent / "src" / "survey_versions",# repo_root/src (local dev: repo_root/server/routers/..)
-        Path.cwd() / "src" / "survey_versions",                # fallback: relative to current working dir
+        Path("/app/src/survey_versions"),
+        here.parent.parent / "src" / "survey_versions",
+        here.parent.parent.parent / "src" / "survey_versions",
+        Path.cwd() / "src" / "survey_versions",
     ]
 
     tried = []
@@ -56,7 +51,6 @@ def _get_latest_survey_path() -> Path:
 
 
 def _load_latest_survey() -> dict:
-    """Load the full survey JSON dict (used by both Scorer and DocGenerator)."""
     import json
     path = _get_latest_survey_path()
     with open(path, encoding="utf-8") as f:
@@ -69,13 +63,8 @@ def _get_scorer() -> Scorer:
 
 def _get_survey_version() -> str:
     path = _get_latest_survey_path()
-    # Extract version from filename e.g. survey_v2.json → v2
     return path.stem.replace("survey_", "")
 
-
-# ============================================================
-# Auth — simple shared secret
-# ============================================================
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
@@ -85,18 +74,9 @@ def _verify_secret(secret: str):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 
-# ============================================================
-# Column layout in Form Responses 2
-# Timestamp + 15 student info fields = 16 columns before Q1
-# ============================================================
-
-STUDENT_INFO_COLS = 16  # columns 0-15
+STUDENT_INFO_COLS = 16
 TOTAL_QUESTIONS   = 180
 
-
-# ============================================================
-# Request models
-# ============================================================
 
 class ScoreRequest(BaseModel):
     token: str
@@ -113,7 +93,7 @@ class ScoreRequest(BaseModel):
 
 class ScoreRawRequest(BaseModel):
     token: str
-    response_row: List[Any]  # full row from Form Responses 2
+    response_row: List[Any]
 
     class Config:
         json_schema_extra = {
@@ -124,32 +104,28 @@ class ScoreRawRequest(BaseModel):
         }
 
 
-# ============================================================
-# Response models — named keys, no magic indices
-# ============================================================
-
 class MBTIAxis(BaseModel):
     winner: str
     gap: float
-    scores: Dict[str, float]   # e.g. {"E": 3.5, "I": 1.67}
+    scores: Dict[str, float]
 
 
 class MBTI(BaseModel):
-    type: str                  # e.g. "ENTP"
-    clarity: str               # e.g. "Khá rõ"
+    type: str
+    clarity: str
     gap_avg: float
     note: str
-    axes: Dict[str, MBTIAxis]  # e.g. {"EI": {...}, "SN": {...}}
+    axes: Dict[str, MBTIAxis]
 
 
 class Holland(BaseModel):
-    top3: List[str]            # e.g. ["S", "A", "C"]
-    top3_label: str            # e.g. "SAC"
-    groups: Dict[str, float]   # e.g. {"R": 25, "I": 34, ...}
+    top3: List[str]
+    top3_label: str
+    groups: Dict[str, float]
 
 
 class Ocean(BaseModel):
-    groups: Dict[str, float]   # e.g. {"O": 4.25, "C": 4.33, ...}
+    groups: Dict[str, float]
 
 
 class SSSComponents(BaseModel):
@@ -173,12 +149,7 @@ class ScoreResponse(BaseModel):
     sss: SSS
 
 
-# ============================================================
-# Shared scoring logic
-# ============================================================
-
 def _build_response(token: str, answers: Dict[int, int]) -> ScoreResponse:
-    """Run scorer and build the structured response."""
     if len(answers) != TOTAL_QUESTIONS:
         raise HTTPException(
             status_code=400,
@@ -197,10 +168,9 @@ def _build_response(token: str, answers: Dict[int, int]) -> ScoreResponse:
     ocean_d   = d.get("ocean", {})
     sss_d     = next((cs for cs in d.get("composite_scores", []) if cs["id"] == "sss"), {})
 
-    # Build MBTI axes dict
     axes = {}
     for ax in mbti_d.get("axes", []):
-        key = ax["group_a"]["id"] + ax["group_b"]["id"]   # e.g. "EI"
+        key = ax["group_a"]["id"] + ax["group_b"]["id"]
         axes[key] = MBTIAxis(
             winner=ax["winner"],
             gap=ax["gap"],
@@ -210,7 +180,6 @@ def _build_response(token: str, answers: Dict[int, int]) -> ScoreResponse:
             }
         )
 
-    # Build SSS components
     components_raw = {c["source"]: c["raw_value"] for c in sss_d.get("components", [])}
     sss_components = SSSComponents(
         mbti_social_score=components_raw.get("bipolar_ratio", 0),
@@ -244,32 +213,11 @@ def _build_response(token: str, answers: Dict[int, int]) -> ScoreResponse:
     )
 
 
-# ============================================================
-# Endpoints
-# ============================================================
-
 @router.post("/score", response_model=ScoreResponse)
 def score(
     payload: ScoreRequest,
     x_webhook_secret: str = Header(default=""),
 ):
-    """
-    Score a survey submission from a pre-built answers dict.
-
-    Apps Script usage:
-        var answersObj = {};
-        for (var i = 0; i < 180; i++) {
-            answersObj[i + 1] = responseData[16 + i];
-        }
-        var response = UrlFetchApp.fetch(SERVER_URL + '/webhook/score', {
-            method: 'post',
-            contentType: 'application/json',
-            headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
-            payload: JSON.stringify({ token: token, answers: answersObj })
-        });
-        var scores = JSON.parse(response.getContentText());
-        // Access: scores.mbti.type, scores.holland.top3_label, scores.sss.score
-    """
     _verify_secret(x_webhook_secret)
     return _build_response(payload.token, payload.answers)
 
@@ -279,23 +227,6 @@ def score_raw(
     payload: ScoreRawRequest,
     x_webhook_secret: str = Header(default=""),
 ):
-    """
-    Score a survey submission from a raw Form Responses row.
-    Extracts answers from columns 16-195 automatically.
-
-    Apps Script usage (simplest — just pass the whole row):
-        var response = UrlFetchApp.fetch(SERVER_URL + '/webhook/score-raw', {
-            method: 'post',
-            contentType: 'application/json',
-            headers: { 'X-Webhook-Secret': WEBHOOK_SECRET },
-            payload: JSON.stringify({
-                token: token,
-                response_row: responseData
-            })
-        });
-        var scores = JSON.parse(response.getContentText());
-        // Access: scores.mbti.type, scores.holland.top3_label, scores.sss.score
-    """
     _verify_secret(x_webhook_secret)
 
     row = payload.response_row
@@ -307,7 +238,6 @@ def score_raw(
             detail=f"Row too short: expected at least {expected_min} columns, got {len(row)}"
         )
 
-    # Extract answers from columns 16-195 (0-based)
     answers = {
         i + 1: int(row[STUDENT_INFO_COLS + i])
         for i in range(TOTAL_QUESTIONS)
@@ -317,7 +247,6 @@ def score_raw(
 
 
 def _extract_answers_from_row(row: List[Any]) -> Dict[int, int]:
-    """Shared helper: extract the 180 answers from a raw response row."""
     expected_min = STUDENT_INFO_COLS + TOTAL_QUESTIONS
     if len(row) < expected_min:
         raise HTTPException(
@@ -329,10 +258,6 @@ def _extract_answers_from_row(row: List[Any]) -> Dict[int, int]:
         for i in range(TOTAL_QUESTIONS)
     }
 
-
-# ============================================================
-# TEST/DEV — full AI report generation with real Opus call
-# ============================================================
 
 class TestReportRequest(BaseModel):
     token: str
@@ -356,10 +281,6 @@ class TestReportResponse(BaseModel):
     estimated_cost_usd: float
 
 
-# ============================================================
-# TEST/DEV — markdown-to-docx conversion ONLY (no API call, free)
-# ============================================================
-
 class MarkdownToDocxRequest(BaseModel):
     markdown_text: str
 
@@ -380,13 +301,6 @@ def markdown_to_docx(
     payload: MarkdownToDocxRequest,
     x_webhook_secret: str = Header(default=""),
 ):
-    """
-    DEV/TEST ONLY — converts markdown text to a .docx file via pandoc,
-    no Anthropic API call involved (zero cost). Use this to verify the
-    pandoc pipeline runs correctly inside the deployed container, using
-    any markdown text you already have (e.g. a previously generated
-    report), without spending tokens on a new generation.
-    """
     _verify_secret(x_webhook_secret)
 
     from services.report import markdown_to_docx_base64
@@ -404,20 +318,6 @@ def test_report_stream(
     payload: TestReportRequest,
     x_webhook_secret: str = Header(default=""),
 ):
-    """
-    DEV/TEST ONLY — same as /test-report but streams the response as it
-    generates, instead of waiting for the whole thing then sending one
-    blob. This keeps real bytes flowing to the client the entire time,
-    which avoids idle-connection gateway timeouts on long Route B
-    generations (the non-streaming version waited several minutes
-    sending nothing, which some proxies treat as a dead connection).
-
-    Returns plain text: the report streamed chunk by chunk, followed by
-    a "===METADATA===" marker and a JSON blob with token usage/cost.
-
-    Does NOT return docx_base64 — call /webhook/markdown-to-docx
-    separately with the collected report text if you need the .docx.
-    """
     _verify_secret(x_webhook_secret)
 
     row     = payload.response_row
@@ -451,17 +351,6 @@ def test_report(
     payload: TestReportRequest,
     x_webhook_secret: str = Header(default=""),
 ):
-    """
-    DEV/TEST ONLY — calls the real Anthropic API directly with the full
-    career report SOP and real student scores, using Claude Opus with
-    a generous token budget (no artificial cap).
-
-    Use this to measure real cost and quality before committing to a
-    production architecture. NOT wired into the student-facing pipeline —
-    Apps Script still owns doc creation for now.
-
-    Requires ANTHROPIC_API_KEY environment variable on the server.
-    """
     _verify_secret(x_webhook_secret)
 
     row     = payload.response_row
@@ -488,10 +377,6 @@ def test_report(
     return TestReportResponse(**result)
 
 
-# ============================================================
-# Mirror Check — portrait generation
-# ============================================================
-
 class GeneratePortraitsRequest(BaseModel):
     token: str
     response_row: List[Any]
@@ -508,10 +393,22 @@ class GeneratePortraitsRequest(BaseModel):
 class GeneratePortraitsResponse(BaseModel):
     portrait_text: str
     score_matched: str | None
+    # These four were added to services/portraits.py's return dict but not
+    # declared here — Pydantic silently strips any dict key that isn't a
+    # declared field when building the response, so Apps Script was
+    # receiving empty/missing values for all four even though the backend
+    # computed them correctly (confirmed via Railway logs showing no
+    # "sections not found" warning, meaning parsing succeeded internally).
+    # Declaring them here is what actually lets them reach the JSON response.
+    logic_summary: str
+    student_portraits: str
+    mirror_question: str
+    consultant_note: str
     model: str
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: float
+    truncated: bool
 
 
 @router.post("/generate-portraits", response_model=GeneratePortraitsResponse)
@@ -522,16 +419,12 @@ def generate_portraits(
     """
     Generate 3 micro-portraits for the Mirror Check step.
 
-    Takes the same response_row format as /webhook/score-raw.
-    Scores the submission internally, then calls Claude Sonnet to
-    generate Portrait A (score-matched), Portrait B (neighbor), and
-    Portrait C (tension/check) per the An Du / META64 SOP.
+    Returns the full 4-section portrait text (portrait_text), the same
+    text split into its 4 sections (logic_summary, student_portraits,
+    mirror_question, consultant_note), and which portrait (A/B/C) the
+    system considers score-matched.
 
-    Returns the full 4-section portrait text and which portrait (A/B/C)
-    the system considers score-matched — needed later to compute Mirror Fit
-    when the student returns their choice via the Mirror Check Google Form.
-
-    Cost: ~$0.05–$0.10 per call (much cheaper than full report generation).
+    Cost: ~$0.05–$0.12 per call.
     """
     _verify_secret(x_webhook_secret)
 
@@ -557,5 +450,3 @@ def generate_portraits(
         raise HTTPException(status_code=500, detail=f"Portrait generation failed: {str(e)}")
 
     return GeneratePortraitsResponse(**result)
-
-
