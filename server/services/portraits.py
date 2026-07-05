@@ -233,11 +233,19 @@ def _parse_score_matched(text: str) -> Optional[str]:
 # Script so there is a single source of truth for the format — if the
 # prompt's headers ever change, only this needs updating, not every
 # downstream consumer (Apps Script, future admin UI, etc).
+#
+# NOTE: These patterns deliberately do NOT anchor on the roman numeral
+# (I./II./III./IV.) — the model sometimes wraps the numeral in markdown
+# (e.g. **II.**) with the bold markers landing between the numeral and
+# the title text, which broke a numeral-anchored match here before (same
+# root issue as the earlier score_matched markdown bug). Each section's
+# distinctive title phrase is unique enough on its own — no need to
+# also require the numeral to be adjacent to it.
 _SECTION_PATTERNS = {
-    "I": re.compile(r"I\.\s*TÓM TẮT LOGIC SINH PORTRAIT", re.IGNORECASE),
-    "II": re.compile(r"II\.\s*3 MICRO-PORTRAITS CHO HỌC SINH", re.IGNORECASE),
-    "III": re.compile(r"III\.\s*CÂU HỎI MIRROR CHECK CHO HỌC SINH", re.IGNORECASE),
-    "IV": re.compile(r"IV\.\s*CONSULTANT NOTE NỘI BỘ", re.IGNORECASE),
+    "I": re.compile(r"TÓM TẮT LOGIC SINH PORTRAIT", re.IGNORECASE),
+    "II": re.compile(r"3 MICRO-PORTRAITS CHO HỌC SINH", re.IGNORECASE),
+    "III": re.compile(r"CÂU HỎI MIRROR CHECK CHO HỌC SINH", re.IGNORECASE),
+    "IV": re.compile(r"CONSULTANT NOTE NỘI BỘ", re.IGNORECASE),
 }
 _SECTION_ORDER = ["I", "II", "III", "IV"]
 
@@ -327,6 +335,10 @@ def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> 
     if missing_sections:
         print(f"=== WARNING: sections not found in output: {missing_sections} "
               f"(likely truncation or a prompt format change) ===")
+        for key in missing_sections:
+            phrase_present = bool(_SECTION_PATTERNS[key].search(text))
+            print(f"    - Section {key}: title phrase found in raw text = {phrase_present} "
+                  f"(if True, the issue is section ORDERING/overlap, not the pattern itself)")
     print("=== PORTRAIT TEXT START ===")
     print(text)
     print("=== PORTRAIT TEXT END ===")
