@@ -234,18 +234,23 @@ def _parse_score_matched(text: str) -> Optional[str]:
 # prompt's headers ever change, only this needs updating, not every
 # downstream consumer (Apps Script, future admin UI, etc).
 #
-# NOTE: These patterns deliberately do NOT anchor on the roman numeral
-# (I./II./III./IV.) — the model sometimes wraps the numeral in markdown
-# (e.g. **II.**) with the bold markers landing between the numeral and
-# the title text, which broke a numeral-anchored match here before (same
-# root issue as the earlier score_matched markdown bug). Each section's
-# distinctive title phrase is unique enough on its own — no need to
-# also require the numeral to be adjacent to it.
+# NOTE 1: These patterns match the ENTIRE heading line (via ^.*PHRASE.*$
+# with MULTILINE), not just the distinctive phrase. An earlier version
+# matched only the phrase (e.g. "3 MICRO-PORTRAITS CHO HỌC SINH") to
+# avoid being broken by markdown bold splitting the roman numeral from
+# its title (e.g. "**II.**"). But matching only the phrase meant the
+# slice boundary landed AFTER any leading "## II." on that line, so the
+# "## II." got stuck as a stray trailing fragment at the END of the
+# PREVIOUS section's text instead of at the start of this one — visible
+# in rendered docs as an orphaned "## II." line right before the real
+# "II. ..." heading. Matching the full line (whatever it contains before
+# the phrase) fixes this: the boundary now falls at the true start of
+# the heading line, regardless of what markdown/numeral prefix is there.
 _SECTION_PATTERNS = {
-    "I": re.compile(r"TÓM TẮT LOGIC SINH PORTRAIT", re.IGNORECASE),
-    "II": re.compile(r"3 MICRO-PORTRAITS CHO HỌC SINH", re.IGNORECASE),
-    "III": re.compile(r"CÂU HỎI MIRROR CHECK CHO HỌC SINH", re.IGNORECASE),
-    "IV": re.compile(r"CONSULTANT NOTE NỘI BỘ", re.IGNORECASE),
+    "I": re.compile(r"^.*TÓM TẮT LOGIC SINH PORTRAIT.*$", re.IGNORECASE | re.MULTILINE),
+    "II": re.compile(r"^.*3 MICRO-PORTRAITS CHO HỌC SINH.*$", re.IGNORECASE | re.MULTILINE),
+    "III": re.compile(r"^.*CÂU HỎI MIRROR CHECK CHO HỌC SINH.*$", re.IGNORECASE | re.MULTILINE),
+    "IV": re.compile(r"^.*CONSULTANT NOTE NỘI BỘ.*$", re.IGNORECASE | re.MULTILINE),
 }
 _SECTION_ORDER = ["I", "II", "III", "IV"]
 
