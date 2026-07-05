@@ -15,6 +15,11 @@ Output is a plain-text response with four clearly delimited sections:
 Sections II and III are student-facing (no MBTI/RIASEC/OCEAN codes).
 Sections I and IV are consultant-only.
 
+The raw text is split into these 4 sections here (backend), not by callers
+(e.g. Apps Script) — this keeps the section-header format as a single
+source of truth. If portrait_prompt.md's required output headers ever
+change, only _parse_sections() below needs updating.
+
 TODO: Wire in data quality flags (Fatigue Risk, Speed Risk, Relevance Risk)
 from the post-test UX survey once that data is available per-token.
 Currently defaults to "không" for all three.
@@ -223,19 +228,69 @@ def _parse_score_matched(text: str) -> Optional[str]:
     return None
 
 
+# Section headers exactly as specified in portrait_prompt.md's required
+# output format. Splitting happens here (backend) rather than in Apps
+# Script so there is a single source of truth for the format — if the
+# prompt's headers ever change, only this needs updating, not every
+# downstream consumer (Apps Script, future admin UI, etc).
+_SECTION_PATTERNS = {
+    "I": re.compile(r"I\.\s*TÓM TẮT LOGIC SINH PORTRAIT", re.IGNORECASE),
+    "II": re.compile(r"II\.\s*3 MICRO-PORTRAITS CHO HỌC SINH", re.IGNORECASE),
+    "III": re.compile(r"III\.\s*CÂU HỎI MIRROR CHECK CHO HỌC SINH", re.IGNORECASE),
+    "IV": re.compile(r"IV\.\s*CONSULTANT NOTE NỘI BỘ", re.IGNORECASE),
+}
+_SECTION_ORDER = ["I", "II", "III", "IV"]
+
+
+def _parse_sections(text: str) -> Dict[str, str]:
+    """
+    Split the raw portrait_text into its 4 defined sections:
+      I   — Logic summary (consultant-only)
+      II  — 3 micro-portraits (student-facing, no MBTI/RIASEC/OCEAN codes)
+      III — Mirror Check question + follow-ups (student-facing)
+      IV  — Consultant note (consultant-only)
+
+    Matching is done by locating each section's fixed header text and
+    slicing up to the next section's header (or end of string for the
+    last section present). If a header isn't found — e.g. the response
+    was truncated before that section was written — that section comes
+    back as an empty string rather than raising, so callers can still
+    use whatever sections did generate successfully.
+    """
+    starts: Dict[str, int] = {}
+    for key, pattern in _SECTION_PATTERNS.items():
+        match = pattern.search(text)
+        if match:
+            starts[key] = match.start()
+
+    sections: Dict[str, str] = {key: "" for key in _SECTION_ORDER}
+
+    present_keys = [k for k in _SECTION_ORDER if k in starts]
+    for i, key in enumerate(present_keys):
+        start = starts[key]
+        end = starts[present_keys[i + 1]] if i + 1 < len(present_keys) else len(text)
+        sections[key] = text[start:end].strip()
+
+    return sections
+
+
 def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generate 3 micro-portraits for the Mirror Check step.
 
     Returns:
         {
-            "portrait_text": str,
-            "score_matched": str | None,  # "A", "B", or "C"
+            "portrait_text": str,          # full raw output — used for the doc
+            "score_matched": str | None,   # "A", "B", or "C"
+            "logic_summary": str,          # Section I — consultant-only
+            "student_portraits": str,      # Section II — student-facing
+            "mirror_question": str,        # Section III — student-facing
+            "consultant_note": str,        # Section IV — consultant-only
             "model": str,
             "input_tokens": int,
             "output_tokens": int,
             "estimated_cost_usd": float,
-            "truncated": bool,            # True if generation hit MAX_TOKENS
+            "truncated": bool,             # True if generation hit MAX_TOKENS
         }
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -256,6 +311,7 @@ def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> 
 
     text = "".join(block.text for block in message.content if block.type == "text")
     score_matched = _parse_score_matched(text)
+    sections = _parse_sections(text)
     truncated = message.stop_reason == "max_tokens"
 
     input_tokens = message.usage.input_tokens
@@ -267,6 +323,10 @@ def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> 
           f"stop_reason={message.stop_reason} cost=${round(cost, 4)} ===")
     if truncated:
         print("=== WARNING: response hit MAX_TOKENS and was truncated ===")
+    missing_sections = [k for k in _SECTION_ORDER if not sections[k]]
+    if missing_sections:
+        print(f"=== WARNING: sections not found in output: {missing_sections} "
+              f"(likely truncation or a prompt format change) ===")
     print("=== PORTRAIT TEXT START ===")
     print(text)
     print("=== PORTRAIT TEXT END ===")
@@ -274,6 +334,10 @@ def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> 
     return {
         "portrait_text": text,
         "score_matched": score_matched,
+        "logic_summary": sections["I"],
+        "student_portraits": sections["II"],
+        "mirror_question": sections["III"],
+        "consultant_note": sections["IV"],
         "model": MODEL,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
