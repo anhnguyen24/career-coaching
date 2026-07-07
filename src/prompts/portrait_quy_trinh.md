@@ -4,7 +4,7 @@ Mục tiêu
 
 Sau khi học sinh hoàn thành bộ test 180 câu gồm MBTI, RIASEC/Holland và OCEAN, hệ thống sinh ra 3 micro-portraits ngắn để học sinh chọn bản mô tả đúng/giống mình nhất trước khi nhận full report.
 
-Mirror Check không phải là bước “đổi kết quả test theo cảm xúc học sinh”. Đây là bước đo độ khớp giữa:
+Mirror Check không phải là bước "đổi kết quả test theo cảm xúc học sinh". Đây là bước đo độ khớp giữa:
 
 - Summary mà hệ thống dự đoán là khớp nhất với score tổng hợp.
 
@@ -110,7 +110,7 @@ II. NGUYÊN TẮC SINH MICRO-PORTRAITS
 Không viết micro-portrait chỉ dựa trên INFP, ISTJ, ENTP...
 
 - Không sinh thẳng từ RIASEC thành nghề.
-Không viết: “Em hợp IT / marketing / tâm lý / thiết kế.”
+Không viết: "Em hợp IT / marketing / tâm lý / thiết kế."
 
 - Không sinh từ META64 một mình.
 META64 chỉ giúp tinh chỉnh vai trò tạo giá trị, không thay thế score.
@@ -119,7 +119,7 @@ META64 chỉ giúp tinh chỉnh vai trò tạo giá trị, không thay thế sco
 Ba micro-portraits đều phải có căn cứ dữ liệu. Bản sai/không liên quan chỉ dùng được như negative control trong pilot nội bộ nếu team muốn kiểm tra chọn bừa.
 
 - Không viết kiểu horoscope.
-Tránh câu quá chung như: “Em thông minh, có tiềm năng, đôi khi hơi áp lực.”
+Tránh câu quá chung như: "Em thông minh, có tiềm năng, đôi khi hơi áp lực."
 
 - Mỗi portrait phải mô tả hành vi đời thực.
 Nên nói học sinh có năng lượng khi làm gì, dễ làm tốt trong kiểu việc nào, hay kẹt ở đâu, hợp môi trường nào, nên thử project gì.
@@ -143,7 +143,7 @@ Dùng khi:
 - Raw/học bạ không kéo lệch lõi.
 
 Portrait A trả lời:
-“Nếu chỉ nhìn dữ liệu test, app đang hiểu học sinh gần nhất là kiểu người nào?”
+"Nếu chỉ nhìn dữ liệu test, app đang hiểu học sinh gần nhất là kiểu người nào?"
 
 Đây là summary đúng theo hệ thống.
 
@@ -164,7 +164,7 @@ Dùng khi:
 - Học sinh có raw response mở ra một nhánh phụ hợp lý.
 
 Portrait B trả lời:
-“Nếu đọc mềm hơn hoặc đổi trọng tâm sang vùng điểm gần sát, học sinh có thể giống kiểu nào?”
+"Nếu đọc mềm hơn hoặc đổi trọng tâm sang vùng điểm gần sát, học sinh có thể giống kiểu nào?"
 
 Portrait C – TENSION / CHECK PORTRAIT
 
@@ -185,7 +185,7 @@ Dùng khi:
 - Có data conflict giữa score và feedback phụ huynh.
 
 Portrait C trả lời:
-“Có phải hệ thống đang bỏ sót một mặt nào đó của học sinh không?”
+"Có phải hệ thống đang bỏ sót một mặt nào đó của học sinh không?"
 
 IV. PORTRAIT CLUSTER LIBRARY
 
@@ -261,7 +261,7 @@ Sau khi chọn cluster, phải chỉnh bằng modifier:
 
 - E thấp / SSS thấp: tránh viết như học sinh thích public-facing.
 
-- E thấp nhưng SSS vừa: viết là “không thích ồn ào nhưng vẫn quan tâm người dùng thật.”
+- E thấp nhưng SSS vừa: viết là "không thích ồn ào nhưng vẫn quan tâm người dùng thật."
 
 - E cao / SSS cao: có thể viết về tương tác, teamwork, thử việc thật.
 
@@ -287,11 +287,11 @@ Sau khi chọn cluster, phải chỉnh bằng modifier:
 
 - MBTI rõ: dùng để kể cách xử lý thông tin.
 
-- MBTI mềm: chỉ dùng “có xu hướng”, “nghiêng về”, không đóng khung.
+- MBTI mềm: chỉ dùng "có xu hướng", "nghiêng về", không đóng khung.
 
 - Data quality modifier
 
-- Speed Risk: thêm “cần project kiểm chứng”.
+- Speed Risk: thêm "cần project kiểm chứng".
 
 - Fatigue Risk: viết mềm, tránh quá chắc.
 
@@ -313,6 +313,10 @@ Mỗi portrait nên dài 90–140 chữ, gồm 5 ý:
 
 Không nêu mã MBTI, RIASEC, OCEAN, META64 trong bản học sinh đọc.
 
+QUY TẮC ĐỊNH DẠNG BẮT BUỘC (tránh lỗi đã xảy ra trước đây — portrait bị thiếu đoạn văn):
+
+Tiêu đề của mỗi portrait và đoạn văn 90–140 chữ của nó phải đứng liền kề nhau, chỉ cách nhau đúng một dòng trống. Không được chèn dấu phân cách (ví dụ "---") giữa tiêu đề của một portrait và đoạn văn của chính portrait đó — dấu phân cách chỉ được dùng để ngăn cách giữa hai portrait đã hoàn chỉnh với nhau. Trước khi xuất Section II, tự kiểm tra lại: mỗi portrait A, B, C đều phải có đủ cả tiêu đề và đoạn văn, không portrait nào chỉ có tiêu đề mà thiếu nội dung.
+
 VII. SAU KHI HỌC SINH CHỌN
 
 Học sinh chọn 1 trong các lựa chọn:
@@ -327,7 +331,7 @@ G. Không bản nào giống em lắm.
 
 Sau đó hỏi thêm:
 
-- Câu nào trong bản em chọn làm em thấy “đúng là mình” nhất?
+- Câu nào trong bản em chọn làm em thấy "đúng là mình" nhất?
 
 - Có câu nào em thấy không giống mình không?
 
@@ -347,7 +351,7 @@ Nếu học sinh chọn Portrait C:
 Mirror Fit = Cam / Mismatch / Check Fit.
 Diễn giải: có vùng lệch đáng chú ý; cần giải thích và giao Quest kiểm chứng.
 
-Nếu học sinh chọn “không bản nào giống em”:
+Nếu học sinh chọn "không bản nào giống em":
 Mirror Fit = Đỏ / Low Confidence.
 Diễn giải: cần đọc mềm, hỏi thêm, mini-retest hoặc consultant review.
 
@@ -357,16 +361,16 @@ Mirror Fit = Vàng hoặc Cam tùy khoảng cách giữa các portrait.
 IX. CÁCH DÙNG TRONG REPORT
 
 Không viết:
-“Học sinh chọn sai summary.”
+"Học sinh chọn sai summary."
 
 Phải viết:
-“Học sinh không chọn summary mà hệ thống dự đoán là khớp nhất.”
+"Học sinh không chọn summary mà hệ thống dự đoán là khớp nhất."
 
 Không viết:
-“Vì học sinh chọn B nên đổi kết quả thành B.”
+"Vì học sinh chọn B nên đổi kết quả thành B."
 
 Phải viết:
-“Lựa chọn B cho thấy học sinh tự nhận mình gần với nhánh láng giềng hơn. Vì vậy report giữ scoring gốc nhưng đọc thêm vùng này và thiết kế Quest kiểm chứng.”
+"Lựa chọn B cho thấy học sinh tự nhận mình gần với nhánh láng giềng hơn. Vì vậy report giữ scoring gốc nhưng đọc thêm vùng này và thiết kế Quest kiểm chứng."
 
 X. OUTPUT NỘI BỘ SAU MIRROR CHECK
 

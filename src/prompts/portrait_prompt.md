@@ -179,8 +179,6 @@ Khi một chữ Holland (không phải chữ top) nằm trong khoảng ~3 điể
 
 Có thể dùng các cluster sau:
 
-Có thể dùng các cluster sau:
-
 - Deep Analyst.
 
 - Structured Analyst.
@@ -305,13 +303,21 @@ Giọng văn:
 
 - Không dùng mã MBTI/RIASEC/OCEAN/META64.
 
-- Có thể dùng “có xu hướng”, “dễ hợp hơn”, “thường”, “có thể”.
+- Có thể dùng "có xu hướng", "dễ hợp hơn", "thường", "có thể".
+
+QUY TẮC ĐỊNH DẠNG BẮT BUỘC (tránh lỗi đã xảy ra trước đây — portrait bị thiếu đoạn văn):
+
+- Tiêu đề của mỗi portrait (A/B/C) và đoạn văn mô tả của nó PHẢI đứng liền kề nhau — chỉ cách nhau đúng MỘT dòng trống, không được chèn "---" hoặc bất kỳ ký tự phân cách nào giữa tiêu đề và đoạn văn.
+
+- "---" (nếu dùng) chỉ được đặt GIỮA hai portrait hoàn chỉnh (ví dụ giữa cuối đoạn văn của A và tiêu đề của B) — không bao giờ đặt ngay sau tiêu đề của một portrait, trước đoạn văn của chính portrait đó.
+
+- Trước khi hoàn thành Section II, tự kiểm tra: cả 3 portrait A, B, C đều phải có ĐẦY ĐỦ tiêu đề VÀ đoạn văn 90–140 chữ. Không portrait nào được phép chỉ có tiêu đề mà thiếu đoạn văn.
 
 Bước 5. Tạo phần lựa chọn cho học sinh
 
 Sau 3 portraits, viết câu hỏi:
 
-“Trong 3 bản mô tả trên, bản nào giống em ngoài đời nhất, kể cả có điểm em chưa thích?”
+"Trong 3 bản mô tả trên, bản nào giống em ngoài đời nhất, kể cả có điểm em chưa thích?"
 
 Các lựa chọn:
 A. Bản A giống em nhất.
@@ -324,7 +330,7 @@ G. Không bản nào giống em lắm.
 
 Câu hỏi phụ:
 
-- Câu nào trong bản em chọn làm em thấy “đúng là mình” nhất?
+- Câu nào trong bản em chọn làm em thấy "đúng là mình" nhất?
 
 - Có câu nào em thấy không giống mình không?
 
@@ -358,7 +364,7 @@ Sau phần học sinh đọc, tạo Consultant Note gồm:
 
 - Nếu học sinh chọn pha giữa thì cách đọc:
 
-- Nếu học sinh chọn “không bản nào giống em” thì cách xử lý:
+- Nếu học sinh chọn "không bản nào giống em" thì cách xử lý:
 
 - Ảnh hưởng đến full report:
 
@@ -411,7 +417,7 @@ G. Không bản nào giống em lắm.
 
 Câu hỏi phụ:
 
-- Câu nào trong bản em chọn làm em thấy “đúng là mình” nhất?
+- Câu nào trong bản em chọn làm em thấy "đúng là mình" nhất?
 
 - Có câu nào em thấy không giống mình không?
 
@@ -443,6 +449,6 @@ IV. CONSULTANT NOTE NỘI BỘ
 
 - Nếu học sinh chọn pha giữa:
 
-- Nếu học sinh chọn “không bản nào giống em”:
+- Nếu học sinh chọn "không bản nào giống em":
 
 - Ảnh hưởng đến full report:
