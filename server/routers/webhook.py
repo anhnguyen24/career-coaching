@@ -13,7 +13,7 @@ POST /webhook/score-raw
 
 import os
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
@@ -259,6 +259,20 @@ def _extract_answers_from_row(row: List[Any]) -> Dict[int, int]:
     }
 
 
+def _student_info_from_row(row: List[Any]) -> Dict[str, Any]:
+    """Shared helper — same student_info shape used by every endpoint
+    that calls into services/report.py or services/portraits.py."""
+    return {
+        "name":          row[1]  if len(row) > 1  else "",
+        "grade":         row[5]  if len(row) > 5  else "",
+        "school":        row[7]  if len(row) > 7  else "",
+        "direction":     row[11] if len(row) > 11 else "",
+        "after_school":  row[12] if len(row) > 12 else "",
+        "fav_subjects":  row[13] if len(row) > 13 else "",
+        "fav_activities":row[14] if len(row) > 14 else "",
+    }
+
+
 class TestReportRequest(BaseModel):
     token: str
     response_row: List[Any]
@@ -323,16 +337,7 @@ def test_report_stream(
     row     = payload.response_row
     answers = _extract_answers_from_row(row)
     scores_response = _build_response(payload.token, answers)
-
-    student_info = {
-        "name":          row[1]  if len(row) > 1  else "",
-        "grade":         row[5]  if len(row) > 5  else "",
-        "school":        row[7]  if len(row) > 7  else "",
-        "direction":     row[11] if len(row) > 11 else "",
-        "after_school":  row[12] if len(row) > 12 else "",
-        "fav_subjects":  row[13] if len(row) > 13 else "",
-        "fav_activities":row[14] if len(row) > 14 else "",
-    }
+    student_info = _student_info_from_row(row)
 
     from services.report import generate_report_stream
 
@@ -356,16 +361,7 @@ def test_report(
     row     = payload.response_row
     answers = _extract_answers_from_row(row)
     scores_response = _build_response(payload.token, answers)
-
-    student_info = {
-        "name":          row[1]  if len(row) > 1  else "",
-        "grade":         row[5]  if len(row) > 5  else "",
-        "school":        row[7]  if len(row) > 7  else "",
-        "direction":     row[11] if len(row) > 11 else "",
-        "after_school":  row[12] if len(row) > 12 else "",
-        "fav_subjects":  row[13] if len(row) > 13 else "",
-        "fav_activities":row[14] if len(row) > 14 else "",
-    }
+    student_info = _student_info_from_row(row)
 
     from services.report import generate_report
 
@@ -393,13 +389,6 @@ class GeneratePortraitsRequest(BaseModel):
 class GeneratePortraitsResponse(BaseModel):
     portrait_text: str
     score_matched: str | None
-    # These four were added to services/portraits.py's return dict but not
-    # declared here — Pydantic silently strips any dict key that isn't a
-    # declared field when building the response, so Apps Script was
-    # receiving empty/missing values for all four even though the backend
-    # computed them correctly (confirmed via Railway logs showing no
-    # "sections not found" warning, meaning parsing succeeded internally).
-    # Declaring them here is what actually lets them reach the JSON response.
     logic_summary: str
     student_portraits: str
     mirror_question: str
@@ -431,16 +420,7 @@ def generate_portraits(
     row     = payload.response_row
     answers = _extract_answers_from_row(row)
     scores_response = _build_response(payload.token, answers)
-
-    student_info = {
-        "name":          row[1]  if len(row) > 1  else "",
-        "grade":         row[5]  if len(row) > 5  else "",
-        "school":        row[7]  if len(row) > 7  else "",
-        "direction":     row[11] if len(row) > 11 else "",
-        "after_school":  row[12] if len(row) > 12 else "",
-        "fav_subjects":  row[13] if len(row) > 13 else "",
-        "fav_activities":row[14] if len(row) > 14 else "",
-    }
+    student_info = _student_info_from_row(row)
 
     from services.portraits import generate_portraits as _gen_portraits
 
@@ -450,3 +430,214 @@ def generate_portraits(
         raise HTTPException(status_code=500, detail=f"Portrait generation failed: {str(e)}")
 
     return GeneratePortraitsResponse(**result)
+
+
+# ============================================================
+# Final report — async generation with callback
+#
+# Report generation (Claude Opus, full SOP + Master Router) can take
+# 5-6 minutes. Apps Script's own execution has a hard ~6 minute cap, so
+# it CANNOT wait synchronously for this the way /generate-portraits
+# (a much faster Sonnet call) can be waited on. Instead:
+#
+#   1. Apps Script POSTs here with a callback_url (its own Web App URL).
+#   2. This endpoint starts generation in a background thread and
+#      returns {"status": "started"} immediately — no waiting.
+#   3. Apps Script's execution ends right there; nothing is blocked.
+#   4. Minutes later, once generation finishes, the background thread
+#      POSTs the result (or an error) to callback_url on its own.
+#   5. Apps Script's doPost() receives that callback as a brand new,
+#      separate execution — decodes the docx, saves it to Drive,
+#      updates the tracking sheet. See mirror_check_response_trigger.gs.
+#
+# No in-memory job-status tracking is needed on this side since nothing
+# polls this endpoint — the callback is a one-shot push, not something
+# Apps Script asks about repeatedly.
+# ============================================================
+
+class MirrorCheckData(BaseModel):
+    """
+    Mirror Check inputs required by the V4.2 Master Router / Siêu Prompt
+    2.5 prompts. All fields optional — a student who hasn't completed
+    Mirror Check yet still gets a report, per the SOP's explicit
+    fallback ("Chưa có dữ liệu self-confirmation..."), just with this
+    whole object omitted from the request.
+    """
+    score_matched: Optional[str] = None
+    student_choice: Optional[str] = None
+    mirror_fit_color: Optional[str] = None
+    mirror_fit_level: Optional[str] = None
+    highlight_answer: Optional[str] = None
+    mismatch_answer: Optional[str] = None
+    aspiration_answer: Optional[str] = None
+
+
+class GenerateReportAsyncRequest(BaseModel):
+    token: str
+    response_row: List[Any]
+    mirror_check: Optional[MirrorCheckData] = None
+    callback_url: str
+    callback_secret: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "HN-2026-0007",
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4],
+                "mirror_check": {
+                    "score_matched": "A",
+                    "student_choice": "A",
+                    "mirror_fit_color": "Xanh",
+                    "mirror_fit_level": "High Fit",
+                    "highlight_answer": "Câu về việc thích tự làm sản phẩm",
+                    "mismatch_answer": "",
+                },
+                "callback_url": "https://script.google.com/macros/s/XXXXX/exec",
+                "callback_secret": "same-value-as-WEBHOOK_SECRET",
+            }
+        }
+
+
+class GenerateReportAsyncResponse(BaseModel):
+    status: str
+
+
+@router.post("/generate-report-async", response_model=GenerateReportAsyncResponse)
+def generate_report_async_endpoint(
+    payload: GenerateReportAsyncRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    Kicks off full career report generation in the background and
+    returns immediately. The actual result is delivered later via a
+    POST to payload.callback_url (see module docstring above).
+
+    callback_secret is caller-supplied (Apps Script sends its own
+    WEBHOOK_SECRET value back as the expected header on the callback)
+    rather than reusing X-Webhook-Secret directly, so the callback
+    verification is self-contained in the payload and doesn't depend
+    on this endpoint's own auth mechanism staying identical over time.
+    """
+    _verify_secret(x_webhook_secret)
+
+    row     = payload.response_row
+    answers = _extract_answers_from_row(row)
+    scores_response = _build_response(payload.token, answers)
+    student_info = _student_info_from_row(row)
+
+    mirror_check_dict = payload.mirror_check.model_dump() if payload.mirror_check else None
+
+    from services.report import generate_report_async
+
+    try:
+        generate_report_async(
+            student_info=student_info,
+            scores=scores_response.model_dump(),
+            mirror_check=mirror_check_dict,
+            token=payload.token,
+            callback_url=payload.callback_url,
+            callback_secret=payload.callback_secret,
+        )
+    except Exception as e:
+        # This only catches failure to START the background thread itself
+        # (extremely unlikely) — failures DURING generation are caught
+        # inside the thread and reported via the callback instead, since
+        # by then this request has already returned.
+        raise HTTPException(status_code=500, detail=f"Failed to start report generation: {str(e)}")
+
+    return GenerateReportAsyncResponse(status="started")
+
+
+# ============================================================
+# Post-test (UX/experience feedback) survey scoring
+#
+# Replaces the legacy in-sheet formula approach in the post-test
+# spreadsheet's "Scores" tab, which was found to contain real bugs —
+# see services/post_test_scorer.py's module docstring for the full
+# audit findings (UX Score undercounted, TimeScore/LengthPain off by
+# one, QualityFlag fully inverted). All scoring logic now lives in
+# testable Python instead of copy-down spreadsheet formulas.
+# ============================================================
+
+class ScorePostTestRequest(BaseModel):
+    response_row: List[Any]
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "response_row": ["2026-07-10 16:49", "Hoàng Hải Phong", 4, 5, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+                                  "TEST 3", "Không phần nào khó", "Nghĩ vừa vừa", "15–25 phút", "90 câu", "Không",
+                                  "70–80%", "", "", "", "", "HN-2026-0012"]
+            }
+        }
+
+
+class PostTestUX(BaseModel):
+    score: int
+    min: int
+    max: int
+    avg: float
+    level: str
+    answers: List[int]
+
+
+class PostTestQuickSelect(BaseModel):
+    most_tired_part: str
+    hardest_part: str
+    fatigue_answer: str
+    fatigue_score: int
+    time_answer: str
+    time_score: int
+    length_answer: str
+    length_pain: int
+    quality_flag_answer: str
+    quality_flag: int
+    confidence_answer: str
+    confidence_score: int
+
+
+class PostTestOpenAnswers(BaseModel):
+    q22_confusing_wording: str
+    q23_sensitive: str
+    q25_repetitive: str
+    q26_suggestion: str
+    note: str
+
+
+class ScorePostTestResponse(BaseModel):
+    token: str
+    student_name: str
+    ux: PostTestUX
+    quick_select: PostTestQuickSelect
+    data_quality_score: int
+    data_quality_note: str
+    open_answers: PostTestOpenAnswers
+
+
+@router.post("/score-post-test", response_model=ScorePostTestResponse)
+def score_post_test_endpoint(
+    payload: ScorePostTestRequest,
+    x_webhook_secret: str = Header(default=""),
+):
+    """
+    Score a post-test (UX/experience feedback) survey submission from
+    its raw response row. See services/post_test_scorer.py for the
+    full scoring logic and the design document it implements.
+
+    Returns HTTP 400 (not 500) if a Part B answer doesn't exactly
+    match any known option string — this means the live form's option
+    text changed and the lookup tables in post_test_scorer.py need
+    updating, not a transient server error.
+    """
+    _verify_secret(x_webhook_secret)
+
+    from services.post_test_scorer import score_post_test, PostTestScoringError
+
+    try:
+        result = score_post_test(payload.response_row)
+    except PostTestScoringError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Post-test scoring failed: {str(e)}")
+
+    return ScorePostTestResponse(**result)
