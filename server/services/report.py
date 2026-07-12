@@ -31,9 +31,9 @@ MODEL      = "claude-opus-4-7"
 MAX_TOKENS = 20000
 
 PROMPTS_DIRNAME = "prompts"
-SOP_FILENAME           = "quy_trinh_chot_case.md"
-MASTER_ROUTER_FILENAME  = "master_router_prompt.md"
-TRONG_NUOC_FILENAME     = "prompt_2_5_trong_nuoc.md"
+SOP_FILENAME           = "quy_trinh_chot_case_v4_2.md"
+MASTER_ROUTER_FILENAME  = "master_router_prompt_v4_2.md"
+TRONG_NUOC_FILENAME     = "prompt_2_5_trong_nuoc_v4_2.md"
 
 # Exact match against the live form's dropdown options for
 # "Bạn đang quan tâm hướng nào nhất?" — confirmed from the actual form
