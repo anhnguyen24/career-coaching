@@ -1,5 +1,5 @@
 """
-server/services/report.py — AI career report generation (TEST/DEV)
+server/services/report.py — AI career report generation
 
 Mirrors the real consultant workflow: feed the actual SOP document
 (quy_trinh_chot_case.md) and the actual Master Router prompt template
@@ -16,8 +16,11 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Generator
+from typing import Any, Dict, Generator, Optional
 
 import anthropic
 from docx import Document
@@ -85,7 +88,51 @@ def _detect_route(direction: str) -> str:
     return ROUTE_BY_DIRECTION.get(key, "C")
 
 
-def build_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
+def _build_mirror_check_block(mirror_check: Optional[Dict[str, Any]]) -> str:
+    """
+    Build the "Mirror Check response" input block required by the
+    updated (V4.2) Master Router / Siêu Prompt 2.5 prompts. Per those
+    documents, this block must contain:
+      - Micro-portrait app đề xuất mạnh nhất (score_matched)
+      - Học sinh chọn micro-portrait nào (student_choice)
+      - Câu học sinh tick/highlight là đúng nhất
+      - Câu học sinh phản hồi không giống mình nếu có
+      - Mirror Fit sơ bộ (color / level)
+
+    If mirror_check is None (student hasn't completed Mirror Check yet,
+    or this is a legacy /test-report call made before Mirror Check
+    existed), returns the explicit fallback line the V4.2 SOP requires:
+    the report must say self-confirmation data is missing and treat the
+    result as an opening map needing Quest-verification, rather than
+    silently omitting the section.
+    """
+    if not mirror_check:
+        return (
+            "Mirror Check response: Chưa có dữ liệu self-confirmation; "
+            "kết quả cần đọc như bản đồ mở đầu và cần Quest để xác nhận."
+        )
+
+    score_matched   = mirror_check.get("score_matched") or "Không rõ"
+    student_choice  = mirror_check.get("student_choice") or "Không rõ"
+    highlight       = mirror_check.get("highlight_answer") or "Không có"
+    mismatch        = mirror_check.get("mismatch_answer") or "Không có"
+    fit_color       = mirror_check.get("mirror_fit_color") or ""
+    fit_level       = mirror_check.get("mirror_fit_level") or ""
+    fit_combined    = f"{fit_color} / {fit_level}" if fit_color or fit_level else "Không rõ"
+
+    return f"""Mirror Check response:
+- Micro-portrait app đề xuất mạnh nhất: {score_matched}
+- Học sinh chọn micro-portrait nào: {student_choice}
+- Câu học sinh tick/highlight là đúng nhất: {highlight}
+- Câu học sinh phản hồi không giống mình nếu có: {mismatch}
+- Mirror Fit sơ bộ: {fit_combined}"""
+
+
+def build_prompt(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    mirror_check: Optional[Dict[str, Any]] = None,
+) -> str:
     sop           = _read_file(SOP_FILENAME)
     master_router = _read_file(MASTER_ROUTER_FILENAME)
 
@@ -97,6 +144,8 @@ def build_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
 
     transcript = student_info.get("transcript")
     transcript_line = f"\nHọc bạ (bằng chứng minh họa, không tự chốt hướng): {transcript}" if transcript else ""
+
+    mirror_check_block = _build_mirror_check_block(mirror_check)
 
     filled_fields = f"""
 THÔNG TIN ĐIỀN VÀO MASTER ROUTER (thay cho các trường [Điền tên học sinh] v.v. ở trên):
@@ -111,6 +160,8 @@ Hoạt động yêu thích: {student_info.get('fav_activities', '')}
 Tình trạng case: Test lần đầu
 File đầu vào: File test (đã chấm điểm bên dưới){transcript_line}
 Format cần viết theo: format An Du, đầy đủ Student Snapshot + Executive Summary + Consultant Note
+
+{mirror_check_block}
 
 DỮ LIỆU ĐÃ CHẤM ĐIỂM (không bịa thêm, không tính lại — đã verify):
 
@@ -132,6 +183,11 @@ ROUTER" phía trên (cùng với tài liệu bổ sung Trong Nước nếu có) 
 cá nhân đầy đủ cho học sinh này. Điền đúng route, chạy đúng chuỗi suy luận, không nhảy bước.
 Không bịa tên trường/chương trình/số liệu nếu không chắc. Không cắt ngắn để tiết kiệm độ dài
 — đây là báo cáo gửi gia đình thật.
+
+Trước khi viết bất kỳ kết luận ngành/major nào, PHẢI đi qua MIRROR CHECK GATE (6 câu hỏi bắt
+buộc) theo đúng yêu cầu trong SIÊU PROMPT 3.0 MASTER ROUTER, dùng dữ liệu Mirror Check response
+ở trên. Nếu Mirror Fit là Cam hoặc Đỏ, không được viết ngành/major theo giọng chốt cứng —
+phải nêu rõ vùng cần Quest kiểm chứng trước khi khẳng định.
 
 YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy trình ở trên):
 
@@ -165,6 +221,10 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
 7. **Phải có [LỜI KẾT GỬI PHỤ HUYNH]** ở cuối — đoạn ngắn (4-6 câu) tóm gọn tinh thần báo
    cáo: đây là bản đồ mở không phải bản án; nhấn lại điểm mạnh cốt lõi; nhắc gia đình tránh
    đẩy con theo hướng ngược với dữ liệu.
+
+8. **Phải có mục "Mirror Check / Self-confirmation"** trong phần phân tích chi tiết, và
+   Consultant Note bắt buộc phải nêu: Mirror Fit, vùng lệch nếu có, ảnh hưởng đến độ tin cậy
+   của report, và Quest theo dõi tương ứng.
 """
 
     return (
@@ -280,7 +340,11 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
 
 
 
-def generate_report_stream(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Generator[str, None, None]:
+def generate_report_stream(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    mirror_check: Optional[Dict[str, Any]] = None,
+) -> Generator[str, None, None]:
     """
     True streaming version — yields each text chunk AS IT ARRIVES from
     Anthropic, so the HTTP response itself carries continuous bytes the
@@ -306,7 +370,7 @@ def generate_report_stream(student_info: Dict[str, Any], scores: Dict[str, Any])
         raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
 
     client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
-    prompt = build_prompt(student_info, scores)
+    prompt = build_prompt(student_info, scores, mirror_check)
 
     print(f"=== Starting streaming generation for {student_info.get('name', '')} "
           f"(prompt length: {len(prompt)} chars) ===")
@@ -343,7 +407,11 @@ def generate_report_stream(student_info: Dict[str, Any], scores: Dict[str, Any])
     yield "\n\n===METADATA===\n" + json.dumps(metadata, ensure_ascii=False)
 
 
-def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
+def generate_report(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    mirror_check: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
@@ -352,7 +420,7 @@ def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dic
     # for long generations like this — Anthropic recommends streaming +
     # an explicit timeout for any request expected to run several minutes).
     client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
-    prompt = build_prompt(student_info, scores)
+    prompt = build_prompt(student_info, scores, mirror_check)
 
     print(f"=== Starting generation for {student_info.get('name', '')} "
           f"(prompt length: {len(prompt)} chars) ===")
@@ -404,3 +472,106 @@ def generate_report(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dic
         "output_tokens": output_tokens,
         "estimated_cost_usd": round(cost, 4),
     }
+
+
+def _post_callback(callback_url: str, callback_secret: str, payload: Dict[str, Any]) -> None:
+    """
+    POST the finished (or failed) report result back to Apps Script's
+    Web App callback URL. Uses stdlib urllib rather than requests/httpx
+    to avoid adding a new dependency for a single outbound call.
+
+    Failures here are logged, not raised — by the time this runs, the
+    original HTTP request that kicked off generation is long since
+    finished and has nothing to return an error to. If the callback
+    itself fails (Apps Script down, wrong URL, etc.), the report is
+    still fully generated and logged to stdout by generate_report()
+    above — recoverable by hand from Railway logs if needed, just not
+    automatically delivered to the doc.
+    """
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        callback_url,
+        data=data,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "X-Callback-Secret": callback_secret,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            print(f"=== Callback POST to {callback_url} returned HTTP {resp.status} ===")
+    except urllib.error.HTTPError as e:
+        print(f"ERROR: Callback POST to {callback_url} failed with HTTP {e.code}: {e.read()[:500]}")
+    except Exception as e:
+        print(f"ERROR: Callback POST to {callback_url} failed: {e}")
+
+
+def _generate_report_and_callback(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    mirror_check: Optional[Dict[str, Any]],
+    token: str,
+    callback_url: str,
+    callback_secret: str,
+) -> None:
+    """
+    Runs generate_report() to completion, then POSTs the result (or an
+    error) back to callback_url. Meant to be run in a background thread
+    — see generate_report_async() below — so the original HTTP request
+    that triggered this can return immediately without waiting for the
+    multi-minute generation to finish.
+    """
+    try:
+        result = generate_report(student_info, scores, mirror_check)
+        payload = {
+            "token": token,
+            "status": "done",
+            "report_text": result["report_text"],
+            "docx_base64": result["docx_base64"],
+            "model": result["model"],
+            "input_tokens": result["input_tokens"],
+            "output_tokens": result["output_tokens"],
+            "estimated_cost_usd": result["estimated_cost_usd"],
+            # Echoed inside the body (not just the X-Callback-Secret header)
+            # because Apps Script's doPost() cannot reliably read custom
+            # request headers across all runtime versions — verifying
+            # against a body field is more robust than relying on headers
+            # actually surviving the trip.
+            "callback_secret_echo": callback_secret,
+        }
+    except Exception as e:
+        print(f"ERROR: Report generation failed for token {token}: {e}")
+        payload = {
+            "token": token,
+            "status": "error",
+            "error": str(e),
+            "callback_secret_echo": callback_secret,
+        }
+
+    _post_callback(callback_url, callback_secret, payload)
+
+
+def generate_report_async(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    mirror_check: Optional[Dict[str, Any]],
+    token: str,
+    callback_url: str,
+    callback_secret: str,
+) -> None:
+    """
+    Starts report generation in a background thread and returns
+    immediately — does NOT wait for generation to finish. The caller
+    (the /webhook/generate-report-async endpoint) should return a
+    "started" response to its own caller right after calling this.
+
+    When generation finishes (successfully or not), the result is
+    POSTed to callback_url — see _generate_report_and_callback().
+    """
+    thread = threading.Thread(
+        target=_generate_report_and_callback,
+        args=(student_info, scores, mirror_check, token, callback_url, callback_secret),
+        daemon=True,
+    )
+    thread.start()
