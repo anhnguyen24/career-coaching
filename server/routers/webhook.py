@@ -520,10 +520,20 @@ def generate_report_async_endpoint(
     """
     _verify_secret(x_webhook_secret)
 
-    row     = payload.response_row
-    answers = _extract_answers_from_row(row)
-    scores_response = _build_response(payload.token, answers)
-    student_info = _student_info_from_row(row)
+    row = payload.response_row
+
+    try:
+        answers = _extract_answers_from_row(row)
+        scores_response = _build_response(payload.token, answers)
+        student_info = _student_info_from_row(row)
+    except HTTPException:
+        raise  # preserve the specific 400/500 + detail from these helpers
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to score/extract student info from response_row before "
+                    f"starting report generation: {type(e).__name__}: {str(e)}"
+        )
 
     mirror_check_dict = payload.mirror_check.model_dump() if payload.mirror_check else None
 
