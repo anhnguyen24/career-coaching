@@ -14,6 +14,7 @@ Requires:
 import base64
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -24,6 +25,8 @@ from typing import Any, Dict, Generator, Optional
 
 import anthropic
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 
@@ -204,40 +207,89 @@ phải nêu rõ vùng cần Quest kiểm chứng trước khi khẳng định.
 
 YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy trình ở trên):
 
-1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") trong [PHẦN A] hoặc [PHẦN B] gửi học sinh/phụ huynh.**
-   MBTI type chỉ được nêu tên trong [AUDIT NỘI BỘ]. Phần gửi gia đình chỉ tả tính cách bằng
-   ngôn ngữ thường ("em có xu hướng...", "em hợp kiểu..."), không gắn nhãn 4 chữ cái.
+1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") ở bất kỳ đâu trong báo cáo.** Đây là tài liệu gửi
+   thẳng cho gia đình — không có phần nội bộ riêng nữa (xem quy tắc 10). Chỉ tả tính cách
+   bằng ngôn ngữ thường ("em có xu hướng...", "em hợp kiểu..."), không gắn nhãn 4 chữ cái ở
+   bất kỳ đâu trong toàn bộ output.
 
 2. **Xếp hạng major family/vùng nghề ưu tiên #1 phải tương ứng với mã Holland điểm cao nhất**
    trong Top 3, trừ khi có lý do rõ từ OCEAN/SSS/bối cảnh để hạ xuống — nếu đảo thứ tự, phải
-   nêu lý do cụ thể trong [AUDIT NỘI BỘ].
+   nêu lý do cụ thể ngay trong đoạn phân tích Holland (mục 4), không có phần audit riêng để
+   đẩy lý do đó sang.
 
-3. **Phải có [TÊN ĐỌC RIÊNG]** — một cụm từ ngắn (4-6 chữ), giàu hình ảnh, tóm gọn cách học
-   sinh tạo giá trị (không phải tên nghề, không phải nhãn tính cách). Sau tên, viết 2-3 câu
-   giải thích, làm rõ tên này không ép học sinh vào một nghề cố định.
+3. **Tên đọc riêng phải LÀ chính tiêu đề đó, không phải placeholder.** Viết heading là chính
+   cụm từ đã nghĩ ra (ví dụ heading `### Người vẽ ý tưởng có phanh`), TUYỆT ĐỐI không viết
+   heading kiểu `### [TÊN ĐỌC RIÊNG]` rồi mới ghi tên thật ở dòng dưới. Cụm từ ngắn (4-6 chữ),
+   giàu hình ảnh, tóm gọn cách học sinh tạo giá trị (không phải tên nghề, không phải nhãn tính
+   cách). Sau tên, viết 2-3 câu giải thích, làm rõ tên này không ép học sinh vào một nghề
+   cố định.
 
 4. **Mỗi major family/vùng nghề đề xuất phải được đào sâu đầy đủ**, không chỉ liệt kê tên:
    - Vì sao hợp (nối tới Holland/OCEAN/SSS/bối cảnh cụ thể của học sinh này)
    - Ngành này học gì (course content thực tế, không bịa tên trường cụ thể)
    - Việc thường gặp sau khi ra trường (5-8 việc cụ thể)
    - Vai trò nghề có thể hướng tới (3-5 chức danh cụ thể)
-   - Mức ưu tiên (Rất cao / Cao / Khá cao / Có điều kiện / Trung bình) kèm lý do ngắn
+   - Mức ưu tiên (Rất cao / Cao / Khá cao / Có điều kiện / Trung bình) kèm lý do ngắn — viết
+     dòng này dạng `**Mức ưu tiên:** Rất cao — <lý do>` bằng CHỮ THUẦN, không thêm bất kỳ
+     emoji/icon/ký hiệu trang trí nào (không ⭐, không 🎯, không bất kỳ ký tự Unicode
+     trang trí nào) trước hoặc sau.
 
-5. **Phải có "Application Story Themes"** trong Phần B — 3-4 trục câu chuyện cho personal
+5. **Phải có "Application Story Themes"** trong phần đầy đủ — 3-4 trục câu chuyện cho personal
    statement, mỗi trục 2-3 câu, gắn cụ thể vào dữ liệu/bối cảnh thật của học sinh này (không
    viết chung chung kiểu "em rất thích giúp người").
 
-6. **Phải có "Hồ sơ nên có"** trong Phần B — personal statement nên xoay quanh chủ đề gì,
+6. **Phải có "Hồ sơ nên có"** trong phần đầy đủ — personal statement nên xoay quanh chủ đề gì,
    loại portfolio/hoạt động nên có, loại project nên làm, hướng thư giới thiệu nên nhấn vào
    điều gì.
 
-7. **Phải có [LỜI KẾT GỬI PHỤ HUYNH]** ở cuối — đoạn ngắn (4-6 câu) tóm gọn tinh thần báo
-   cáo: đây là bản đồ mở không phải bản án; nhấn lại điểm mạnh cốt lõi; nhắc gia đình tránh
-   đẩy con theo hướng ngược với dữ liệu.
+7. **Phải có mục "Lời kết gửi phụ huynh"** ở cuối — heading viết thường, KHÔNG có dấu ngoặc
+   vuông bao quanh (viết `## Lời kết gửi phụ huynh`, không viết `## [LỜI KẾT GỬI PHỤ HUYNH]`).
+   Đoạn ngắn (4-6 câu) tóm gọn tinh thần báo cáo: đây là bản đồ mở không phải bản án; nhấn lại
+   điểm mạnh cốt lõi; nhắc gia đình tránh đẩy con theo hướng ngược với dữ liệu.
 
-8. **Phải có mục "Mirror Check / Self-confirmation"** trong phần phân tích chi tiết, và
-   Consultant Note bắt buộc phải nêu: Mirror Fit, vùng lệch nếu có, ảnh hưởng đến độ tin cậy
-   của report, và Quest theo dõi tương ứng.
+8. **Phải có mục "Mirror Check / Self-confirmation"** trong phần phân tích chi tiết, nêu rõ:
+   Mirror Fit, vùng lệch nếu có, ảnh hưởng đến độ tin cậy của report, và Quest theo dõi
+   tương ứng. Đây là báo cáo family-facing duy nhất — không có báo cáo nội bộ riêng để tách
+   thông tin này ra, nên phải viết đủ chi tiết ngay tại đây bằng giọng phù hợp để phụ huynh
+   đọc được (không dùng thuật ngữ kỹ thuật khô như "Mirror Mismatch Risk" trần trụi — diễn
+   giải bằng câu bình thường).
+
+9. **TUYỆT ĐỐI KHÔNG dùng emoji hoặc icon Unicode trang trí ở BẤT KỲ ĐÂU** trong toàn bộ
+   output — không trong heading, không trong bullet, không ở đầu/cuối câu. Chỉ dùng chữ và
+   dấu câu thông thường. Nhấn mạnh bằng **bold** hoặc *italic*, không dùng ký hiệu trang trí.
+
+10. **KHÔNG tạo mục "PHẦN C – CONSULTANT NOTE" hay bất kỳ phần audit/nội bộ nào ở cuối báo
+    cáo.** Toàn bộ output chỉ có 2 phần lớn — không có phần thứ ba. Mọi thông tin (Holland,
+    OCEAN, Career Card, META64, O*NET, VSCO, Mirror Check, cảnh báo) đều viết trực tiếp trong
+    2 phần đó, bằng giọng phù hợp để gia đình đọc trực tiếp — không có nơi nào để "giấu" nội
+    dung kỹ thuật ra sau một bức tường ngăn cách nữa.
+
+11. **Đặt tên 2 phần lớn bằng chữ cái, KHÔNG dùng từ "PHẦN".** Viết heading cấp 1 (H1) là
+    `# A. <tiêu đề ngắn>` và `# B. <tiêu đề ngắn>` — ví dụ `# A. Bản đọc nhanh cho em Quyên`
+    và `# B. Báo cáo đầy đủ cho phụ huynh`. KHÔNG viết "PHẦN A", "Phần A –", hay bất kỳ biến
+    thể nào có chữ "Phần".
+
+12. **Trong phần A, các mục con dùng chữ cái thường + dấu ngoặc đơn** (`a)`, `b)`, `c)`...)
+    làm heading cấp 2 (H2), viết liền trước tiêu đề — ví dụ `## a) Em là kiểu người như thế
+    nào`. Trong phần B, các mục lớn tiếp tục đánh số 1., 2., 3... như đã quy định ở các mục
+    trên (giữ nguyên cách đánh số hiện tại của phần B, không đổi).
+
+13. **Mỗi bảng markdown phải có một dòng caption in đậm ngay phía trên**, dạng
+    `**Bảng N: <tên bảng>**`, với N là số thứ tự bảng tăng dần xuyên suốt toàn bộ báo cáo
+    (không reset theo từng phần). Ví dụ: `**Bảng 1: O*NET Role Expansion**`.
+
+14. **Chèn đúng 2 marker sau, mỗi marker trên một dòng riêng, không có gì khác trên dòng đó:**
+    - Marker `[TOC]` — đặt ngay sau khối thông tin tiêu đề (Học sinh/Lớp/Route/Ngày phát
+      hành) và TRƯỚC heading `# A. ...`. Đây sẽ được thay bằng mục lục thật.
+    - Marker `[PAGEBREAK]` — đặt ngay TRƯỚC heading `# B. ...` (để phần B bắt đầu ở trang
+      mới). KHÔNG đặt marker `[PAGEBREAK]` ở bất kỳ chỗ nào khác.
+    Không giải thích hay nhắc đến 2 marker này trong nội dung — chúng chỉ là điểm đánh dấu kỹ
+    thuật, sẽ được thay thế tự động, không hiển thị dạng chữ trong bản cuối.
+
+15. **Trang đầu tiên (trước marker `[TOC]`) phải trình bày trang trọng, giống trang bìa**:
+    tiêu đề báo cáo là `# BÁO CÁO HƯỚNG NGHIỆP CÁ NHÂN`, theo sau là khối thông tin học sinh
+    (Học sinh / Lớp-Trường / Định hướng / Route case / Ngày phát hành) viết dạng
+    `**Nhãn:** Giá trị` mỗi dòng — không thêm nội dung phân tích nào khác ở trang này.
 """
 
     return (
@@ -315,16 +367,154 @@ def _get_reference_docx() -> Path:
             _force_font_no_theme(style, "Arial")
             if style.name == "Normal":
                 style.font.size = Pt(11)
+                # Body text justified, not left-aligned — headings are left
+                # untouched (they inherit their own alignment, which stays
+                # left by default and should — justify only makes sense for
+                # multi-line body paragraphs).
+                style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     doc.save(path)
     _REFERENCE_DOCX_CACHE = path
     return path
 
 
+_TOC_FIELD_OOXML = """```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+<w:sdt>
+  <w:sdtPr>
+    <w:docPartObj>
+      <w:docPartGallery w:val="Table of Contents"/>
+      <w:docPartUnique/>
+    </w:docPartObj>
+  </w:sdtPr>
+  <w:sdtContent>
+    <w:p>
+      <w:pPr><w:pStyle w:val="TOCHeading"/></w:pPr>
+      <w:r><w:t>Mục lục</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>
+      <w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r>
+      <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+      <w:r><w:t>(Nhấn phải chuột chọn "Update Field" hoặc phím F9 để cập nhật mục lục)</w:t></w:r>
+      <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    </w:p>
+</w:sdtContent>
+</w:sdt>
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```"""
+
+_PAGEBREAK_OOXML = """```{=openxml}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>
+```"""
+
+# Matches common decorative Unicode emoji ranges — used as a backstop in
+# case the model doesn't fully comply with the "no emoji" prompt rule.
+# Deliberately does NOT strip ordinary Vietnamese diacritics or CJK
+# characters, which live in entirely different Unicode blocks.
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"  # symbols & pictographs, emoticons, transport, supplemental symbols
+    "\U00002600-\U000027BF"  # misc symbols, dingbats (includes ⭐ U+2B50 is outside this — added below)
+    "\U00002B00-\U00002BFF"  # misc symbols and arrows (covers ⭐ U+2B50)
+    "\U0001F1E6-\U0001F1FF"  # regional indicator symbols (flags)
+    "\U0000FE0F"             # variation selector-16 (emoji presentation)
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _strip_trailing_consultant_section(text: str) -> str:
+    """
+    Safety net: the prompt now instructs the model to never generate a
+    separate consultant/audit section (Phần C), but LLM instruction-
+    following isn't 100% guaranteed — this truncates anything from a
+    recognizable "Part C" heading onward if one slips through anyway,
+    so a prompt-compliance miss can't leak internal-only content (MBTI
+    codes, raw audit notes) into the family-facing document.
+    """
+    markers = [
+        r"^#\s*C\.\s",
+        r"PHẦN\s+C\b",
+        r"CONSULTANT\s+NOTE",
+        r"\[AUDIT\s+NỘI\s+BỘ\]",
+    ]
+    earliest_cut = None
+    for pattern in markers:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match and (earliest_cut is None or match.start() < earliest_cut):
+            earliest_cut = match.start()
+    if earliest_cut is not None:
+        print(f"WARNING: Trailing consultant/audit section detected and stripped "
+              f"(model didn't fully follow the 'no Part C' instruction) — "
+              f"cut at character {earliest_cut}")
+        return text[:earliest_cut].rstrip()
+    return text
+
+
+def _replace_markers(text: str) -> str:
+    """Replace the [TOC] and [PAGEBREAK] markers the prompt instructs the
+    model to emit with their real raw-OOXML equivalents."""
+    text = text.replace("[TOC]", _TOC_FIELD_OOXML)
+    text = text.replace("[PAGEBREAK]", _PAGEBREAK_OOXML)
+    return text
+
+
+def _strip_stray_emoji(text: str) -> str:
+    """Backstop for the 'no emoji' prompt rule — removes any that slip
+    through despite the instruction, rather than relying on compliance
+    alone."""
+    return _EMOJI_PATTERN.sub("", text)
+
+
+def _style_tables(docx_path: Path) -> None:
+    """
+    Post-process every table in the generated docx: add visible grid
+    borders (pandoc's default table style renders borderless tables)
+    and bold the header row. Done via python-docx after conversion
+    rather than fighting pandoc's reference-doc table-style-name
+    resolution, which is fragile and version-dependent.
+    """
+    doc = Document(str(docx_path))
+
+    for table in doc.tables:
+        tbl = table._tbl
+        tblPr = tbl.tblPr
+        borders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            el = OxmlElement(f"w:{edge}")
+            el.set(qn("w:val"), "single")
+            el.set(qn("w:sz"), "4")
+            el.set(qn("w:space"), "0")
+            el.set(qn("w:color"), "000000")
+            borders.append(el)
+        tblPr.append(borders)
+
+        if table.rows:
+            for cell in table.rows[0].cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.bold = True
+
+    doc.save(str(docx_path))
+
+
 def markdown_to_docx_base64(markdown_text: str) -> str:
     """
     Convert markdown report text to a .docx file via pandoc,
     return as base64 string ready to send over JSON.
+
+    Pipeline:
+      1. Strip any trailing consultant/audit section that slipped
+         through despite the prompt instruction not to generate one.
+      2. Replace [TOC] / [PAGEBREAK] markers with real raw-OOXML blocks
+         (Word TOC field, page break) — see build_prompt()'s rule 14.
+      3. Strip any stray emoji that slipped through despite the
+         prompt's "no emoji" rule.
+      4. Run pandoc (with raw_attribute enabled, required for the raw
+         OOXML blocks above to pass through instead of being escaped).
+      5. Post-process the resulting docx: add visible borders + bold
+         header row to every table (pandoc's default is borderless).
 
     Apps Script usage (decode + save to Drive — runs as real user,
     so no service-account storage quota issue):
@@ -333,6 +523,10 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
         var blob  = Utilities.newBlob(bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'BC_' + token + '.docx');
         var file  = folder.createFile(blob);
     """
+    markdown_text = _strip_trailing_consultant_section(markdown_text)
+    markdown_text = _replace_markers(markdown_text)
+    markdown_text = _strip_stray_emoji(markdown_text)
+
     with tempfile.TemporaryDirectory() as tmp:
         md_path   = Path(tmp) / "report.md"
         docx_path = Path(tmp) / "report.docx"
@@ -341,12 +535,14 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
         reference_doc = _get_reference_docx()
 
         result = subprocess.run(
-            ["pandoc", "-f", "markdown+hard_line_breaks", str(md_path),
+            ["pandoc", "-f", "markdown+hard_line_breaks+raw_attribute", str(md_path),
              "-o", str(docx_path), f"--reference-doc={reference_doc}"],
             capture_output=True, text=True
         )
         if result.returncode != 0:
             raise RuntimeError(f"pandoc conversion failed: {result.stderr}")
+
+        _style_tables(docx_path)
 
         docx_bytes = docx_path.read_bytes()
         return base64.b64encode(docx_bytes).decode("utf-8")
