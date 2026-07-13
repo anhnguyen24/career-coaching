@@ -28,7 +28,20 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 
 MODEL      = "claude-opus-4-7"
-MAX_TOKENS = 20000
+MAX_TOKENS = 32000
+# NOTE: raised from 20000 after the first real V4.2 test (Hà Quyên,
+# 2026-07-13) hit exactly 20000 output tokens and got cut off mid-
+# sentence in the final [AUDIT NỘI BỘ] section — the V4.2 SOP's
+# required structure (15 numbered sections, per-ngành deep-dives x5,
+# O*NET + VSCO tables, full roadmap, Quest section, audit appendix) is
+# simply longer than the older report format this was tuned for.
+# Claude Opus 4.7 supports up to 128,000 output tokens on the standard
+# Messages API (per Anthropic's docs) — 20000 was using under a fifth
+# of that. 32000 gives real headroom (that test was maybe a few
+# hundred tokens short of finishing) without the much larger worst-
+# case cost of maxing out at 128K ($25/million output tokens — 128K
+# alone could run ~$3.20 if ever fully used; 32K keeps worst case
+# closer to ~$0.80 for output).
 
 PROMPTS_DIRNAME = "prompts"
 SOP_FILENAME           = "quy_trinh_chot_case_v4_2.md"
