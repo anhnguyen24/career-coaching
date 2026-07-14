@@ -104,6 +104,102 @@ def _detect_route(direction: str) -> str:
     return ROUTE_BY_DIRECTION.get(key, "C")
 
 
+# ============================================================
+# Transcript file handling (Pass 2)
+#
+# Students can attach one or more transcript files (PDF or image) in
+# the main survey. Apps Script fetches these from Drive, base64-
+# encodes them, and sends them as transcript_files in the
+# generate-report-async payload — see mirror_check_response_trigger.gs.
+# Claude reads them directly as real document/image content (not OCR'd
+# separately), via Anthropic's native document/image content blocks.
+# ============================================================
+
+# Anthropic's Messages API uses a different content-block "type" for
+# PDFs ("document") vs. images ("image") — this maps each accepted
+# mime type to the correct block type. Anything not in this dict is
+# rejected (logged, not sent to Claude) rather than guessed at.
+TRANSCRIPT_MIME_TO_BLOCK_TYPE = {
+    "application/pdf": "document",
+    "image/jpeg": "image",
+    "image/png": "image",
+    "image/gif": "image",
+    "image/webp": "image",
+}
+
+TRANSCRIPT_MAX_FILES = 5
+# ~20MB of actual file bytes, expressed as a base64-character-count
+# limit (base64 inflates size by ~4/3) — a generous cap for scanned
+# transcripts/report cards, well above what real report-card photos
+# or a multi-page PDF should ever need.
+TRANSCRIPT_MAX_TOTAL_BASE64_CHARS = 20 * 1024 * 1024 * 4 // 3
+
+
+def _build_transcript_content_blocks(transcript_files: Optional[list]) -> list:
+    """
+    Convert the raw transcript_files list (from the API request — each
+    item a dict with filename/mime_type/data) into Anthropic API
+    content blocks, ready to prepend to the text prompt.
+
+    Applies the same kind of defensive validation as everywhere else
+    in this pipeline: unsupported mime types are skipped (not sent to
+    Claude, not a hard failure), and both a file-count cap and a
+    total-size cap protect against one oversized/malformed upload
+    silently blowing up the request. Any single bad file is skipped
+    with a log line rather than failing the whole report — a report
+    generated from *some* of the transcript is better than no report
+    at all.
+    """
+    if not transcript_files:
+        return []
+
+    blocks = []
+    total_base64_chars = 0
+    files_included = 0
+
+    for f in transcript_files:
+        filename = f.get("filename", "unknown")
+        mime_type = f.get("mime_type", "")
+        data = f.get("data", "")
+
+        if files_included >= TRANSCRIPT_MAX_FILES:
+            print(f"WARNING: Transcript file '{filename}' skipped — already at "
+                  f"TRANSCRIPT_MAX_FILES ({TRANSCRIPT_MAX_FILES}) limit.")
+            continue
+
+        if mime_type not in TRANSCRIPT_MIME_TO_BLOCK_TYPE:
+            print(f"WARNING: Transcript file '{filename}' skipped — unsupported "
+                  f"mime type '{mime_type}'. Allowed: {list(TRANSCRIPT_MIME_TO_BLOCK_TYPE.keys())}")
+            continue
+
+        if not data:
+            print(f"WARNING: Transcript file '{filename}' skipped — no data.")
+            continue
+
+        if total_base64_chars + len(data) > TRANSCRIPT_MAX_TOTAL_BASE64_CHARS:
+            print(f"WARNING: Transcript file '{filename}' skipped — would exceed "
+                  f"total transcript size cap ({TRANSCRIPT_MAX_TOTAL_BASE64_CHARS} base64 chars).")
+            continue
+
+        block_type = TRANSCRIPT_MIME_TO_BLOCK_TYPE[mime_type]
+        blocks.append({
+            "type": block_type,
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": data,
+            },
+        })
+        total_base64_chars += len(data)
+        files_included += 1
+
+    if blocks:
+        print(f"=== Attached {len(blocks)} transcript file(s) as document/image content "
+              f"({total_base64_chars} base64 chars total) ===")
+
+    return blocks
+
+
 def _build_mirror_check_block(mirror_check: Optional[Dict[str, Any]]) -> str:
     """
     Build the "Mirror Check response" input block required by the
@@ -148,6 +244,7 @@ def build_prompt(
     student_info: Dict[str, Any],
     scores: Dict[str, Any],
     mirror_check: Optional[Dict[str, Any]] = None,
+    has_transcript_files: bool = False,
 ) -> str:
     sop           = _read_file(SOP_FILENAME)
     master_router = _read_file(MASTER_ROUTER_FILENAME)
@@ -158,8 +255,25 @@ def build_prompt(
     if route == "B":
         extra_branch_doc = "\n\n---\n\n# TÀI LIỆU BỔ SUNG — SIÊU PROMPT 2.5 (TRONG NƯỚC)\n\n" + _read_file(TRONG_NUOC_FILENAME)
 
-    transcript = student_info.get("transcript")
-    transcript_line = f"\nHọc bạ (bằng chứng minh họa, không tự chốt hướng): {transcript}" if transcript else ""
+    # Two independent ways transcript info can arrive:
+    #   1. has_transcript_files=True — actual file(s) (PDF/image) are attached
+    #      as separate document/image content blocks in the API call itself
+    #      (see _build_transcript_content_blocks) — Claude reads them
+    #      directly, this is just a text pointer telling it they're there.
+    #   2. student_info["transcript"] — a plain text description (legacy
+    #      fallback, used if no real files were ever wired in for this call).
+    # Both can't really apply at once in practice, but handle gracefully
+    # either way rather than assuming only one path is ever used.
+    if has_transcript_files:
+        transcript_line = (
+            "\nHọc bạ (bằng chứng minh họa, không tự chốt hướng): đã đính kèm bên dưới "
+            "dưới dạng file/ảnh — đọc trực tiếp nội dung file để lấy thông tin điểm số, "
+            "môn mạnh/môn yếu. Không bịa thêm nếu file khó đọc; nếu vậy, ghi rõ trong "
+            "phần audit rằng cần xác nhận lại thủ công."
+        )
+    else:
+        transcript = student_info.get("transcript")
+        transcript_line = f"\nHọc bạ (bằng chứng minh họa, không tự chốt hướng): {transcript}" if transcript else ""
 
     mirror_check_block = _build_mirror_check_block(mirror_check)
 
@@ -620,6 +734,7 @@ def generate_report(
     student_info: Dict[str, Any],
     scores: Dict[str, Any],
     mirror_check: Optional[Dict[str, Any]] = None,
+    transcript_files: Optional[list] = None,
 ) -> Dict[str, Any]:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -629,10 +744,22 @@ def generate_report(
     # for long generations like this — Anthropic recommends streaming +
     # an explicit timeout for any request expected to run several minutes).
     client = anthropic.Anthropic(api_key=api_key, timeout=900.0)
-    prompt = build_prompt(student_info, scores, mirror_check)
+
+    transcript_blocks = _build_transcript_content_blocks(transcript_files)
+    prompt = build_prompt(student_info, scores, mirror_check, has_transcript_files=bool(transcript_blocks))
+
+    # Documents/images go BEFORE the text prompt in the content list —
+    # this is Anthropic's documented ordering recommendation, so Claude
+    # has the actual transcript content in view before reading the
+    # instructions that reference it. Falls back to the old plain-string
+    # form when there are no files, functionally identical to before.
+    if transcript_blocks:
+        message_content = transcript_blocks + [{"type": "text", "text": prompt}]
+    else:
+        message_content = prompt
 
     print(f"=== Starting generation for {student_info.get('name', '')} "
-          f"(prompt length: {len(prompt)} chars) ===")
+          f"(prompt length: {len(prompt)} chars, {len(transcript_blocks)} transcript file(s)) ===")
 
     # Stream the response instead of a single synchronous create() call —
     # this is Anthropic's documented recommendation for long-running
@@ -642,7 +769,7 @@ def generate_report(
     with client.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": message_content}],
     ) as stream:
         for _ in stream.text_stream:
             pass  # could log incremental progress here if needed
@@ -720,6 +847,7 @@ def _generate_report_and_callback(
     student_info: Dict[str, Any],
     scores: Dict[str, Any],
     mirror_check: Optional[Dict[str, Any]],
+    transcript_files: Optional[list],
     token: str,
     callback_url: str,
     callback_secret: str,
@@ -732,7 +860,7 @@ def _generate_report_and_callback(
     multi-minute generation to finish.
     """
     try:
-        result = generate_report(student_info, scores, mirror_check)
+        result = generate_report(student_info, scores, mirror_check, transcript_files)
         payload = {
             "token": token,
             "status": "done",
@@ -768,6 +896,7 @@ def generate_report_async(
     token: str,
     callback_url: str,
     callback_secret: str,
+    transcript_files: Optional[list] = None,
 ) -> None:
     """
     Starts report generation in a background thread and returns
@@ -780,7 +909,7 @@ def generate_report_async(
     """
     thread = threading.Thread(
         target=_generate_report_and_callback,
-        args=(student_info, scores, mirror_check, token, callback_url, callback_secret),
+        args=(student_info, scores, mirror_check, transcript_files, token, callback_url, callback_secret),
         daemon=True,
     )
     thread.start()

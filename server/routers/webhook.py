@@ -472,10 +472,27 @@ class MirrorCheckData(BaseModel):
     aspiration_answer: Optional[str] = None
 
 
+class TranscriptFile(BaseModel):
+    """
+    One transcript/report-card file (PDF or image), base64-encoded by
+    Apps Script from a Drive attachment. Validated further server-side
+    against a mime-type whitelist and size caps in
+    services/report.py's _build_transcript_content_blocks() — this
+    model just defines the wire shape, doesn't enforce those rules
+    itself, so a rejected file here still arrives as a normal request
+    rather than a 422 (rejection happens gracefully downstream, with a
+    log line, not by failing the whole request).
+    """
+    filename: str
+    mime_type: str
+    data: str  # base64-encoded file bytes
+
+
 class GenerateReportAsyncRequest(BaseModel):
     token: str
     response_row: List[Any]
     mirror_check: Optional[MirrorCheckData] = None
+    transcript_files: Optional[List[TranscriptFile]] = None
     callback_url: str
     callback_secret: str
 
@@ -492,6 +509,9 @@ class GenerateReportAsyncRequest(BaseModel):
                     "highlight_answer": "Câu về việc thích tự làm sản phẩm",
                     "mismatch_answer": "",
                 },
+                "transcript_files": [
+                    {"filename": "phieu_diem.jpg", "mime_type": "image/jpeg", "data": "<base64>"}
+                ],
                 "callback_url": "https://script.google.com/macros/s/XXXXX/exec",
                 "callback_secret": "same-value-as-WEBHOOK_SECRET",
             }
@@ -536,6 +556,9 @@ def generate_report_async_endpoint(
         )
 
     mirror_check_dict = payload.mirror_check.model_dump() if payload.mirror_check else None
+    transcript_files_list = (
+        [f.model_dump() for f in payload.transcript_files] if payload.transcript_files else None
+    )
 
     from services.report import generate_report_async
 
@@ -544,6 +567,7 @@ def generate_report_async_endpoint(
             student_info=student_info,
             scores=scores_response.model_dump(),
             mirror_check=mirror_check_dict,
+            transcript_files=transcript_files_list,
             token=payload.token,
             callback_url=payload.callback_url,
             callback_secret=payload.callback_secret,
