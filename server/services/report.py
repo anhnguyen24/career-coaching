@@ -31,7 +31,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Mm, Inches
 
 MODEL      = "claude-opus-4-7"
 MAX_TOKENS = 32000
@@ -550,6 +550,26 @@ def _get_reference_docx() -> Path:
                 # heading, so sections don't feel cluttered.
                 style.paragraph_format.space_before = Pt(18)
 
+    # Explicitly set A4 portrait page size + 1-inch margins on the
+    # default section. Pandoc's own default reference doc declares
+    # NEITHER a page size nor margins at all (confirmed by inspection —
+    # section.page_width etc. all return None), leaving it entirely to
+    # whichever renderer's own implicit default happens to apply. This
+    # is the likely root cause of two separate reported issues: (1) a
+    # crash in _get_page_content_width_dxa needing an explicit width to
+    # compute fixed table sizing, and (2) some pages rendering as
+    # landscape — different renderers (Word, LibreOffice, Google Docs)
+    # can guess differently when nothing is declared, especially across
+    # the multiple sections _center_title_page introduces. Vietnamese
+    # audience → A4, not US Letter.
+    section = doc.sections[0]
+    section.page_width = Mm(210)   # A4
+    section.page_height = Mm(297)  # A4
+    section.left_margin = Inches(1)
+    section.right_margin = Inches(1)
+    section.top_margin = Inches(1)
+    section.bottom_margin = Inches(1)
+
     doc.save(path)
     _REFERENCE_DOCX_CACHE = path
     return path
@@ -712,6 +732,41 @@ def _center_title_page(doc: Document) -> None:
         p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
+def _get_page_content_width_dxa(doc: Document) -> int:
+    """
+    Compute the usable content width (page width minus left/right
+    margins) of the document's default section, in twentieths of a
+    point (dxa — the unit OOXML table widths use). Used to force
+    tables to a FIXED total width matching the page, rather than
+    letting them auto-expand based on cell content — which is the
+    likely cause of some pages rendering as landscape (a renderer's
+    "table doesn't fit, try rotating the page" heuristic kicking in
+    for wide tables with long cell text).
+
+    _get_reference_docx() now explicitly sets A4 + 1in margins, so this
+    should always resolve cleanly — the fallback below (same A4 + 1in
+    values, computed in dxa directly) only matters if some future
+    change to that function accidentally drops the explicit page size
+    again, same failure mode confirmed during testing (pandoc's own
+    default reference doc has NO page size declared at all).
+    """
+    section = doc.sections[0]
+    width = section.page_width
+    left = section.left_margin
+    right = section.right_margin
+    if width is None or left is None or right is None:
+        print("WARNING: Section page_width/margins are None — falling back to "
+              "A4 + 1in margin defaults for table width calculation.")
+        return 11906 - 1440 - 1440  # A4 width dxa - 1in - 1in margins
+    # .twips converts python-docx's internal EMU representation to dxa
+    # (twentieths of a point) — the unit OOXML's w:tblW actually expects.
+    # Must convert EACH Length to .twips individually before subtracting
+    # — subtracting two Length objects returns a plain int (loses the
+    # .twips conversion method), caught during testing as an
+    # AttributeError on the very next line after fixing a related bug.
+    return int(width.twips - left.twips - right.twips)
+
+
 def _style_tables(doc: Document) -> None:
     """
     Post-process every table: add visible grid borders (pandoc's
@@ -720,12 +775,23 @@ def _style_tables(doc: Document) -> None:
     python-docx after conversion rather than fighting pandoc's
     reference-doc table-style-name resolution, which is fragile and
     version-dependent.
+
+    Also forces each table to a FIXED total width matching the page's
+    content width (tblLayout=fixed + explicit tblW), instead of the
+    default auto-fit-to-content behavior — a wide table with long cell
+    text can otherwise exceed the page width, which is the likely
+    cause of some pages rendering landscape (some renderers/converters
+    auto-rotate a page to fit an overflowing table rather than
+    reporting an error).
     """
+    content_width_dxa = _get_page_content_width_dxa(doc)
+
     for table in doc.tables:
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
         tbl = table._tbl
         tblPr = tbl.tblPr
+
         borders = OxmlElement("w:tblBorders")
         for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
             el = OxmlElement(f"w:{edge}")
@@ -736,11 +802,79 @@ def _style_tables(doc: Document) -> None:
             borders.append(el)
         tblPr.append(borders)
 
+        # Fixed layout + explicit total width — see docstring above.
+        tblLayout = OxmlElement("w:tblLayout")
+        tblLayout.set(qn("w:type"), "fixed")
+        tblPr.append(tblLayout)
+
+        tblW = tblPr.find(qn("w:tblW"))
+        if tblW is None:
+            tblW = OxmlElement("w:tblW")
+            tblPr.append(tblW)
+        tblW.set(qn("w:type"), "dxa")
+        tblW.set(qn("w:w"), str(content_width_dxa))
+
+        # Distribute that fixed width evenly across columns explicitly —
+        # tblLayout=fixed without per-column widths can still leave a
+        # renderer to guess column proportions from content.
+        num_cols = len(table.columns)
+        if num_cols > 0:
+            col_width = content_width_dxa // num_cols
+            grid = tbl.find(qn("w:tblGrid"))
+            if grid is not None:
+                for gridCol in grid.findall(qn("w:gridCol")):
+                    gridCol.set(qn("w:w"), str(col_width))
+            for row in table.rows:
+                for cell in row.cells:
+                    cell.width = col_width
+
         if table.rows:
             for cell in table.rows[0].cells:
                 for para in cell.paragraphs:
                     for run in para.runs:
                         run.bold = True
+
+
+def _style_table_captions(doc: Document) -> None:
+    """
+    Find caption paragraphs matching "Bảng N: ..." and explicitly
+    center + bold them. These are plain body paragraphs from the
+    model's markdown output (not a distinct Word style), so they need
+    the same per-paragraph treatment as everything else post-processed
+    here rather than relying on a style-level default.
+    """
+    caption_pattern = re.compile(r"^Bảng\s+\d+\s*:", re.IGNORECASE)
+    for p in doc.paragraphs:
+        if caption_pattern.match(p.text.strip()):
+            p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in p.runs:
+                run.bold = True
+
+
+def _force_portrait_orientation(doc: Document) -> None:
+    """
+    Explicitly force every section's page orientation to portrait and
+    ensure page width < height accordingly. Defensive — in case any
+    section (including the title-page section created by
+    _center_title_page) ends up with a landscape-flagged pgSz for any
+    reason, this guarantees the final output is portrait throughout.
+    """
+    for section in doc.sections:
+        sectPr = section._sectPr
+        pgSz = sectPr.find(qn("w:pgSz"))
+        if pgSz is None:
+            pgSz = OxmlElement("w:pgSz")
+            sectPr.append(pgSz)
+        # Remove any landscape orientation flag
+        if qn("w:orient") in pgSz.attrib:
+            del pgSz.attrib[qn("w:orient")]
+        width = int(pgSz.get(qn("w:w")) or 0)
+        height = int(pgSz.get(qn("w:h")) or 0)
+        if width and height and width > height:
+            # Swap so width < height (portrait) — this section's
+            # dimensions were landscape; correct them.
+            pgSz.set(qn("w:w"), str(height))
+            pgSz.set(qn("w:h"), str(width))
 
 
 def _normalize_run_font(run) -> None:
@@ -786,19 +920,23 @@ def _post_process_docx(docx_path: Path) -> None:
     """
     Single load/save pass applying every python-docx-level fix:
     strip stray heading numbering, center the title page (its own
-    section with vAlign=center), style tables (borders/bold/centered),
-    and force Arial+black everywhere. Order matters only in that title
-    page centering must run before the general paragraph loop in
-    _normalize_fonts_everywhere touches those same paragraphs — doesn't
-    conflict here since alignment and font/color are independent
-    properties, but keeping this as one clearly-ordered pass avoids
-    any future edit accidentally introducing a conflict.
+    section with vAlign=center), force portrait orientation on every
+    section, style tables (borders/bold/centered/fixed-width), style
+    table captions (centered/bold), and force Arial+black everywhere.
+    Order matters only in that title page centering must run before
+    the general paragraph loop in _normalize_fonts_everywhere touches
+    those same paragraphs — doesn't conflict here since alignment and
+    font/color are independent properties, but keeping this as one
+    clearly-ordered pass avoids any future edit accidentally
+    introducing a conflict.
     """
     doc = Document(str(docx_path))
 
     _strip_heading_numbering(doc)
     _center_title_page(doc)
+    _force_portrait_orientation(doc)
     _style_tables(doc)
+    _style_table_captions(doc)
     _normalize_fonts_everywhere(doc)
 
     doc.save(str(docx_path))
