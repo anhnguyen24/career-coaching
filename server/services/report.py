@@ -203,6 +203,29 @@ def _build_transcript_content_blocks(transcript_files: Optional[list]) -> list:
     return blocks
 
 
+# Deterministic letter -> meaning mapping for the Mirror Check choice,
+# matching the fixed option list in portrait_prompt.md exactly. Spelling
+# this out explicitly in the prompt (rather than sending just the bare
+# letter and expecting the model to recall/infer its meaning from the
+# option list read much earlier in a 150K+ character prompt) is what
+# fixes a real error found in testing: a generation for token
+# HN-2026-0011 (choice F = "pha giữa A và C") incorrectly wrote "pha
+# giữa A và B" in the final report — apparently conflating the
+# mismatch_answer field (which portrait she said DIDN'T fit — B, in
+# that case) with one of the two portraits actually in her blend.
+# Spelling out the meaning here removes the need for the model to
+# recall it at all.
+CHOICE_LABEL_MAP = {
+    "A": "A (bản A giống em nhất)",
+    "B": "B (bản B giống em nhất)",
+    "C": "C (bản C giống em nhất)",
+    "D": "D (pha giữa A và B)",
+    "E": "E (pha giữa B và C)",
+    "F": "F (pha giữa A và C)",
+    "G": "G (không bản nào giống em lắm)",
+}
+
+
 def _build_mirror_check_block(mirror_check: Optional[Dict[str, Any]]) -> str:
     """
     Build the "Mirror Check response" input block required by the
@@ -227,20 +250,33 @@ def _build_mirror_check_block(mirror_check: Optional[Dict[str, Any]]) -> str:
             "kết quả cần đọc như bản đồ mở đầu và cần Quest để xác nhận."
         )
 
-    score_matched   = mirror_check.get("score_matched") or "Không rõ"
-    student_choice  = mirror_check.get("student_choice") or "Không rõ"
-    highlight       = mirror_check.get("highlight_answer") or "Không có"
-    mismatch        = mirror_check.get("mismatch_answer") or "Không có"
-    fit_color       = mirror_check.get("mirror_fit_color") or ""
-    fit_level       = mirror_check.get("mirror_fit_level") or ""
-    fit_combined    = f"{fit_color} / {fit_level}" if fit_color or fit_level else "Không rõ"
+    score_matched_raw = (mirror_check.get("score_matched") or "").strip().upper()
+    student_choice_raw = (mirror_check.get("student_choice") or "").strip().upper()
+
+    # Use the spelled-out label whenever the letter is recognized;
+    # otherwise fall back to the raw value as-is rather than crashing —
+    # an unrecognized letter is a real (if unlikely) data issue that
+    # should still let the report generate, just without translation.
+    score_matched  = CHOICE_LABEL_MAP.get(score_matched_raw, score_matched_raw or "Không rõ")
+    student_choice = CHOICE_LABEL_MAP.get(student_choice_raw, student_choice_raw or "Không rõ")
+
+    highlight = mirror_check.get("highlight_answer") or "Không có"
+    mismatch  = mirror_check.get("mismatch_answer") or "Không có"
+    fit_color = mirror_check.get("mirror_fit_color") or ""
+    fit_level = mirror_check.get("mirror_fit_level") or ""
+    fit_combined = f"{fit_color} / {fit_level}" if fit_color or fit_level else "Không rõ"
 
     return f"""Mirror Check response:
 - Micro-portrait app đề xuất mạnh nhất: {score_matched}
 - Học sinh chọn micro-portrait nào: {student_choice}
-- Câu học sinh tick/highlight là đúng nhất: {highlight}
-- Câu học sinh phản hồi không giống mình nếu có: {mismatch}
-- Mirror Fit sơ bộ: {fit_combined}"""
+- Câu học sinh tick/highlight là đúng nhất (PHẦN ĐÚNG): {highlight}
+- Câu học sinh nói KHÔNG giống mình / KHÔNG phải lựa chọn của em (PHẦN BỊ LOẠI, không phải một phần trong lựa chọn ở trên): {mismatch}
+- Mirror Fit sơ bộ: {fit_combined}
+
+LƯU Ý QUAN TRỌNG: dòng "PHẦN BỊ LOẠI" ở trên là portrait mà học sinh nói KHÔNG giống mình —
+đây KHÔNG phải một trong hai portrait tạo nên lựa chọn "pha giữa" của học sinh (nếu có).
+Chỉ dùng đúng 2 chữ cái đã nêu trong dòng "Học sinh chọn micro-portrait nào" ở trên khi mô tả
+lựa chọn của học sinh — không tự suy ra hoặc thay thế bằng chữ cái nào khác."""
 
 
 def build_prompt(
