@@ -12,6 +12,7 @@ Requires:
 """
 
 import base64
+import copy
 import json
 import os
 import re
@@ -20,15 +21,17 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 
 import anthropic
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 
 MODEL      = "claude-opus-4-7"
 MAX_TOKENS = 32000
@@ -388,9 +391,17 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
     nào`. Trong phần B, các mục lớn tiếp tục đánh số 1., 2., 3... như đã quy định ở các mục
     trên (giữ nguyên cách đánh số hiện tại của phần B, không đổi).
 
-13. **Mỗi bảng markdown phải có một dòng caption in đậm ngay phía trên**, dạng
-    `**Bảng N: <tên bảng>**`, với N là số thứ tự bảng tăng dần xuyên suốt toàn bộ báo cáo
-    (không reset theo từng phần). Ví dụ: `**Bảng 1: O*NET Role Expansion**`.
+13. **Mỗi bảng markdown phải có một dòng caption in đậm ngay PHÍA DƯỚI bảng** (không phải
+    phía trên), dạng `**Bảng N: <tên bảng>**`, với N là số thứ tự bảng tăng dần xuyên suốt
+    toàn bộ báo cáo (không reset theo từng phần). Thứ tự đúng: bảng trước, dòng caption ngay
+    sau (cách 1 dòng trống). Ví dụ:
+    ```
+    | Cột 1 | Cột 2 |
+    |---|---|
+    | A | B |
+
+    **Bảng 1: O*NET Role Expansion**
+    ```
 
 14. **Chèn đúng 2 marker sau, mỗi marker trên một dòng riêng, không có gì khác trên dòng đó:**
     - Marker `[TOC]` — đặt ngay sau khối thông tin tiêu đề (Học sinh/Lớp/Route/Ngày phát
@@ -404,6 +415,12 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
     tiêu đề báo cáo là `# BÁO CÁO HƯỚNG NGHIỆP CÁ NHÂN`, theo sau là khối thông tin học sinh
     (Học sinh / Lớp-Trường / Định hướng / Route case / Ngày phát hành) viết dạng
     `**Nhãn:** Giá trị` mỗi dòng — không thêm nội dung phân tích nào khác ở trang này.
+
+16. **Mọi con số điểm test khi nhắc đến trong bài viết phải kèm theo thang điểm tối đa**,
+    dạng `X/Y`, để người đọc hình dung được vị trí trên thang — không viết số điểm trần trụi
+    một mình. Ví dụ: OCEAN Openness "4.25/5" (không chỉ viết "4.25"); Holland "A (45/50)"
+    (không chỉ viết "A (45)"); SSS "2.83/5". Áp dụng cho MỌI con số điểm xuất hiện trong toàn
+    bộ báo cáo, kể cả trong bảng.
 """
 
     return (
@@ -479,6 +496,12 @@ def _get_reference_docx() -> Path:
     for style in doc.styles:
         if style.name in target_names:
             _force_font_no_theme(style, "Arial")
+            # Black text everywhere, not the reference doc's theme blue —
+            # this is a style-level default; _normalize_fonts_everywhere()
+            # (run after pandoc conversion) additionally forces this at the
+            # individual run level too, since not everything reliably
+            # inherits style-level color (e.g. table cell text).
+            style.font.color.rgb = RGBColor(0, 0, 0)
             if style.name == "Normal":
                 style.font.size = Pt(11)
                 # Body text justified, not left-aligned — headings are left
@@ -486,6 +509,10 @@ def _get_reference_docx() -> Path:
                 # left by default and should — justify only makes sense for
                 # multi-line body paragraphs).
                 style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            if style.name.startswith("Heading"):
+                # Extra breathing room between a paragraph and the next
+                # heading, so sections don't feel cluttered.
+                style.paragraph_format.space_before = Pt(18)
 
     doc.save(path)
     _REFERENCE_DOCX_CACHE = path
@@ -581,17 +608,86 @@ def _strip_stray_emoji(text: str) -> str:
     return _EMOJI_PATTERN.sub("", text)
 
 
-def _style_tables(docx_path: Path) -> None:
+def _strip_heading_numbering(doc: Document) -> None:
     """
-    Post-process every table in the generated docx: add visible grid
-    borders (pandoc's default table style renders borderless tables)
-    and bold the header row. Done via python-docx after conversion
-    rather than fighting pandoc's reference-doc table-style-name
-    resolution, which is fragile and version-dependent.
+    Remove any list-numbering association from heading/title paragraphs.
+    Best-effort fix for a small icon appearing next to headings in some
+    viewers — confirmed NOT coming from style-level numbering (checked
+    directly), so this may be a Google Docs-specific rendering of the
+    bookmark anchors our TOC field's \\h switch creates at each heading
+    (needed for the TOC's clickable links) rather than something in the
+    document itself. Kept as a defensive no-cost safety net regardless.
     """
-    doc = Document(str(docx_path))
+    for p in doc.paragraphs:
+        if p.style.name.startswith("Heading") or p.style.name == "Title":
+            pPr = p._p.find(qn("w:pPr"))
+            if pPr is not None:
+                numPr = pPr.find(qn("w:numPr"))
+                if numPr is not None:
+                    pPr.remove(numPr)
 
+
+def _center_title_page(doc: Document) -> None:
+    """
+    Horizontally AND vertically centers the title page (everything
+    before the first page break — which is the leading break emitted
+    by the [TOC] marker's replacement, right after the title/student
+    info block).
+
+    Vertical centering on a single page (not the whole document)
+    requires giving that content its own Word SECTION with
+    w:vAlign=center — plain page breaks can't do this, they stay
+    within one section. This finds the paragraph carrying the first
+    manual page-break run, strips that literal break (a section break
+    inserted here already forces a new page on its own), and attaches
+    a cloned copy of the document's default section properties (so
+    the title page keeps the same page size/margins as the rest of
+    the doc) with vAlign=center added.
+    """
+    body = doc.element.body
+    body_sectPr = body.find(qn("w:sectPr"))
+    if body_sectPr is None:
+        return  # unexpected reference-doc shape — bail safely, no centering rather than a crash
+
+    boundary_found = False
+    for p in doc.paragraphs:
+        br = p._p.find(".//" + qn("w:br"))
+        if br is not None and br.get(qn("w:type")) == "page":
+            for run_el in list(p._p.findall(qn("w:r"))):
+                p._p.remove(run_el)
+            new_sectPr = copy.deepcopy(body_sectPr)
+            vAlign = OxmlElement("w:vAlign")
+            vAlign.set(qn("w:val"), "center")
+            new_sectPr.append(vAlign)
+            pPr = p._p.get_or_add_pPr()
+            pPr.append(new_sectPr)
+            boundary_found = True
+            break
+
+    if not boundary_found:
+        print("WARNING: _center_title_page could not find a page-break boundary "
+              "paragraph — title page centering skipped. Report still generated normally.")
+        return
+
+    # Horizontally center every paragraph before that same boundary.
+    for p in doc.paragraphs:
+        if p._p.find(".//" + qn("w:sectPr")) is not None:
+            break
+        p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def _style_tables(doc: Document) -> None:
+    """
+    Post-process every table: add visible grid borders (pandoc's
+    default table style renders borderless tables), bold the header
+    row, and center the table horizontally on the page. Done via
+    python-docx after conversion rather than fighting pandoc's
+    reference-doc table-style-name resolution, which is fragile and
+    version-dependent.
+    """
     for table in doc.tables:
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
         tbl = table._tbl
         tblPr = tbl.tblPr
         borders = OxmlElement("w:tblBorders")
@@ -610,7 +706,101 @@ def _style_tables(docx_path: Path) -> None:
                     for run in para.runs:
                         run.bold = True
 
+
+def _normalize_run_font(run) -> None:
+    """Force a single run to Arial + solid black, stripping any theme
+    font/color reference that could otherwise still win out."""
+    run.font.name = "Arial"
+    run.font.color.rgb = RGBColor(0, 0, 0)
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.append(rFonts)
+    for theme_attr in ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"):
+        attr_qn = qn(f"w:{theme_attr}")
+        if attr_qn in rFonts.attrib:
+            del rFonts.attrib[attr_qn]
+    rFonts.set(qn("w:ascii"), "Arial")
+    rFonts.set(qn("w:hAnsi"), "Arial")
+    rFonts.set(qn("w:cs"), "Arial")
+
+
+def _normalize_fonts_everywhere(doc: Document) -> None:
+    """
+    Force Arial + black on EVERY run in the document, including inside
+    table cells — not just relying on style-level defaults (set in
+    _get_reference_docx), since some content (particularly table cell
+    text) doesn't reliably inherit style-level font/color the same way
+    body paragraphs do. This is the guarantee; the style-level setting
+    is just the first line of defense.
+    """
+    for p in doc.paragraphs:
+        for run in p.runs:
+            _normalize_run_font(run)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for run in p.runs:
+                        _normalize_run_font(run)
+
+
+def _post_process_docx(docx_path: Path) -> None:
+    """
+    Single load/save pass applying every python-docx-level fix:
+    strip stray heading numbering, center the title page (its own
+    section with vAlign=center), style tables (borders/bold/centered),
+    and force Arial+black everywhere. Order matters only in that title
+    page centering must run before the general paragraph loop in
+    _normalize_fonts_everywhere touches those same paragraphs — doesn't
+    conflict here since alignment and font/color are independent
+    properties, but keeping this as one clearly-ordered pass avoids
+    any future edit accidentally introducing a conflict.
+    """
+    doc = Document(str(docx_path))
+
+    _strip_heading_numbering(doc)
+    _center_title_page(doc)
+    _style_tables(doc)
+    _normalize_fonts_everywhere(doc)
+
     doc.save(str(docx_path))
+
+
+def _enable_toc_auto_update(docx_path: Path) -> None:
+    """
+    Injects <w:updateFields w:val="true"/> into word/settings.xml,
+    telling Word to automatically recalculate fields (including the
+    TOC) when the document is opened — instead of requiring a manual
+    right-click > Update Field / F9 the first time. Done via direct
+    zip manipulation (docx is a zip archive) rather than python-docx,
+    which has no high-level API for this specific setting.
+
+    Must run AFTER all python-docx-based edits (_post_process_docx)
+    are already saved — python-docx's own .save() fully rewrites the
+    zip archive, which would silently discard this change if applied
+    before that point instead of after.
+    """
+    with zipfile.ZipFile(docx_path, "r") as zin:
+        settings_xml = zin.read("word/settings.xml").decode("utf-8")
+        other_items = [(item, zin.read(item.filename)) for item in zin.infolist()
+                        if item.filename != "word/settings.xml"]
+
+    if "<w:updateFields" not in settings_xml:
+        settings_xml = re.sub(
+            r"(<w:settings[^>]*>)",
+            lambda m: m.group(1) + '<w:updateFields w:val="true"/>',
+            settings_xml,
+            count=1,
+        )
+
+    tmp_path = str(docx_path) + ".tmp"
+    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item, data in other_items:
+            zout.writestr(item, data)
+        zout.writestr("word/settings.xml", settings_xml)
+    os.replace(tmp_path, docx_path)
 
 
 def markdown_to_docx_base64(markdown_text: str) -> str:
@@ -627,8 +817,13 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
          prompt's "no emoji" rule.
       4. Run pandoc (with raw_attribute enabled, required for the raw
          OOXML blocks above to pass through instead of being escaped).
-      5. Post-process the resulting docx: add visible borders + bold
-         header row to every table (pandoc's default is borderless).
+      5. Post-process the resulting docx (_post_process_docx):
+         - strip any stray heading numbering
+         - center the title page (its own section, vAlign=center)
+         - style every table (borders, bold header, centered)
+         - force Arial + black on every run, including table cells
+      6. Enable TOC auto-update on open (_enable_toc_auto_update) —
+         zip-level settings.xml edit, must run after step 5's saves.
 
     Apps Script usage (decode + save to Drive — runs as real user,
     so no service-account storage quota issue):
@@ -656,7 +851,8 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
         if result.returncode != 0:
             raise RuntimeError(f"pandoc conversion failed: {result.stderr}")
 
-        _style_tables(docx_path)
+        _post_process_docx(docx_path)
+        _enable_toc_auto_update(docx_path)
 
         docx_bytes = docx_path.read_bytes()
         return base64.b64encode(docx_bytes).decode("utf-8")
