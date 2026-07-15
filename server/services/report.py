@@ -417,8 +417,14 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
    output — không trong heading, không trong bullet, không ở đầu/cuối câu. Chỉ dùng chữ và
    dấu câu thông thường. Nhấn mạnh bằng **bold** hoặc *italic*, không dùng ký hiệu trang trí.
 
-10. **KHÔNG tạo mục "PHẦN C – CONSULTANT NOTE" hay bất kỳ phần audit/nội bộ nào ở cuối báo
-    cáo.** Toàn bộ output chỉ có 2 phần lớn — không có phần thứ ba. Mọi thông tin (Holland,
+9b. **TUYỆT ĐỐI KHÔNG dùng dấu gạch ngang dài kiểu "—" (em dash) hoặc "–" (en dash) ở BẤT KỲ
+    ĐÂU** trong toàn bộ output. Thay vào đó, dùng dấu phẩy, dấu hai chấm, ngoặc đơn, hoặc viết
+    lại câu để không cần dấu gạch ngang. Nếu thực sự cần một dấu nối ngắn trong một cụm từ
+    (ví dụ khoảng số "11-12"), chỉ dùng dấu gạch nối thường "-" (hyphen, một ký tự ngắn, khác
+    với em dash/en dash).
+
+10. **KHÔNG tạo mục "PHẦN C: CONSULTANT NOTE" hay bất kỳ phần audit/nội bộ nào ở cuối báo
+    cáo.** Toàn bộ output chỉ có 2 phần lớn, không có phần thứ ba. Mọi thông tin (Holland,
     OCEAN, Career Card, META64, O*NET, VSCO, Mirror Check, cảnh báo) đều viết trực tiếp trong
     2 phần đó, bằng giọng phù hợp để gia đình đọc trực tiếp — không có nơi nào để "giấu" nội
     dung kỹ thuật ra sau một bức tường ngăn cách nữa.
@@ -689,6 +695,26 @@ def _fix_over_escaped_bold_markers(text: str) -> str:
     (like O\\*NET) completely untouched.
     """
     return text.replace("\\*\\*", "**")
+
+
+def _strip_em_en_dashes(text: str) -> str:
+    """
+    Replaces every em dash (—, U+2014) and en dash (–, U+2013) with a
+    plain hyphen-with-spaces (" - "). Backstop for build_prompt()'s
+    rule 9b — added on request, since the model has used both dash
+    variants pervasively in generated text (e.g. "Route B – Học tiếp
+    trong nước") despite this being exactly the kind of stylistic
+    instruction that isn't 100% reliable from prompt compliance alone,
+    same reasoning as the emoji-stripping and bold-marker backstops
+    above. Ordinary hyphens ("-", U+002D) are untouched — only the
+    two longer dash characters are targeted.
+    """
+    text = text.replace("—", " - ")
+    text = text.replace("–", " - ")
+    # Collapse any doubled-up spacing the replacement might introduce
+    # (e.g. "word — word" -> "word  -  word" -> "word - word").
+    text = re.sub(r"\s+-\s+", " - ", text)
+    return text
 
 
 def _strip_heading_numbering(doc: Document) -> None:
@@ -1105,6 +1131,7 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
     markdown_text = _replace_markers(markdown_text)
     markdown_text = _strip_stray_emoji(markdown_text)
     markdown_text = _fix_over_escaped_bold_markers(markdown_text)
+    markdown_text = _strip_em_en_dashes(markdown_text)
 
     with tempfile.TemporaryDirectory() as tmp:
         md_path   = Path(tmp) / "report.md"
