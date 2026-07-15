@@ -360,10 +360,16 @@ phải nêu rõ vùng cần Quest kiểm chứng trước khi khẳng định.
 
 YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy trình ở trên):
 
-1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") ở bất kỳ đâu trong báo cáo.** Đây là tài liệu gửi
-   thẳng cho gia đình — không có phần nội bộ riêng nữa (xem quy tắc 10). Chỉ tả tính cách
-   bằng ngôn ngữ thường ("em có xu hướng...", "em hợp kiểu..."), không gắn nhãn 4 chữ cái ở
-   bất kỳ đâu trong toàn bộ output.
+1. **KHÔNG in 4 chữ MBTI (ví dụ "ENTP") ở bất kỳ đâu trong báo cáo — kể cả trong bảng dữ
+   liệu/bảng điểm tổng hợp.** Đây là tài liệu gửi thẳng cho gia đình — không có phần nội bộ
+   riêng nữa (xem quy tắc 10). Chỉ tả tính cách bằng ngôn ngữ thường ("em có xu hướng...",
+   "em hợp kiểu..."), không gắn nhãn 4 chữ cái ở bất kỳ đâu trong toàn bộ output.
+   **QUAN TRỌNG:** quy tắc này áp dụng cho MỌI hình thức trình bày, kể cả nếu bạn tạo một
+   bảng "điểm test gốc" hoặc "tổng hợp kết quả" — cột "Kết quả"/"Giá trị" cho dòng MBTI trong
+   bảng đó KHÔNG được viết 4 chữ cái, chỉ được viết mô tả bằng lời (ví dụ: "Hướng nội, cảm
+   nhận, tình cảm, có kế hoạch — độ rõ nghiêng vừa", không viết "ISFJ, độ rõ nghiêng vừa").
+   Lỗi này đã xảy ra thật trong một lần test trước — hãy tự kiểm tra kỹ trước khi xuất bảng
+   nào có nhắc đến MBTI.
 
 2. **Xếp hạng major family/vùng nghề ưu tiên #1 phải tương ứng với mã Holland điểm cao nhất**
    trong Top 3, trừ khi có lý do rõ từ OCEAN/SSS/bối cảnh để hạ xuống — nếu đảo thứ tự, phải
@@ -664,6 +670,27 @@ def _strip_stray_emoji(text: str) -> str:
     return _EMOJI_PATTERN.sub("", text)
 
 
+def _fix_over_escaped_bold_markers(text: str) -> str:
+    """
+    Fixes a real content quirk found in testing (token HN-2026-0011,
+    2026-07-14): the model correctly escapes the literal asterisk in
+    "O*NET" as "O\\*NET" (a real product name — smart to escape, since
+    an unescaped "*" there risks pandoc parsing it as emphasis
+    syntax), but this escaping habit occasionally bled into the
+    model's OWN bold markdown syntax nearby, turning intended
+    **Bảng 2: ...** captions into literal "\\*\\*Bảng 2: ...\\*\\*"
+    text (visible backslash-asterisks instead of real bold formatting).
+
+    A legitimate single-asterisk escape (O\\*NET) uses ONE backslash-
+    asterisk pair. An over-escaped bold marker uses TWO consecutive
+    backslash-asterisk pairs (\\*\\*), since the model tried to escape
+    both asterisks of its own ** markdown syntax. This targets exactly
+    that four-character sequence, leaving legitimate single escapes
+    (like O\\*NET) completely untouched.
+    """
+    return text.replace("\\*\\*", "**")
+
+
 def _strip_heading_numbering(doc: Document) -> None:
     """
     Remove any list-numbering association from heading/title paragraphs.
@@ -877,12 +904,21 @@ def _force_portrait_orientation(doc: Document) -> None:
             pgSz.set(qn("w:h"), str(width))
 
 
-def _normalize_run_font(run) -> None:
-    """Force a single run to Arial + solid black, stripping any theme
-    font/color reference that could otherwise still win out."""
-    run.font.name = "Arial"
-    run.font.color.rgb = RGBColor(0, 0, 0)
-    rPr = run._element.get_or_add_rPr()
+
+def _normalize_run_element_font(r_element) -> None:
+    """
+    Low-level version of _normalize_run_font that operates directly on
+    a raw <w:r> XML element rather than a python-docx Run wrapper —
+    needed because the recursive body-wide walk in
+    _normalize_fonts_everywhere() below finds runs python-docx's
+    higher-level Run objects aren't conveniently constructed for
+    (e.g. runs inside a w:sdt wrapper).
+    """
+    rPr = r_element.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        r_element.insert(0, rPr)
+
     rFonts = rPr.find(qn("w:rFonts"))
     if rFonts is None:
         rFonts = OxmlElement("w:rFonts")
@@ -895,25 +931,38 @@ def _normalize_run_font(run) -> None:
     rFonts.set(qn("w:hAnsi"), "Arial")
     rFonts.set(qn("w:cs"), "Arial")
 
+    color = rPr.find(qn("w:color"))
+    if color is None:
+        color = OxmlElement("w:color")
+        rPr.append(color)
+    color.set(qn("w:val"), "000000")
+
 
 def _normalize_fonts_everywhere(doc: Document) -> None:
     """
-    Force Arial + black on EVERY run in the document, including inside
-    table cells — not just relying on style-level defaults (set in
-    _get_reference_docx), since some content (particularly table cell
-    text) doesn't reliably inherit style-level font/color the same way
-    body paragraphs do. This is the guarantee; the style-level setting
-    is just the first line of defense.
+    Force Arial + black on EVERY run in the document — including ones
+    doc.paragraphs/doc.tables don't reach at all.
+
+    Confirmed by testing (token HN-2026-0011, 2026-07-14): the earlier
+    version of this function only walked doc.paragraphs + doc.tables,
+    which silently MISSED the TOC field's own "Mục lục" heading text —
+    that content lives inside a <w:sdt> structured-document-tag wrapper
+    (part of the TOC field's own required structure — see
+    _TOC_FIELD_OOXML), and python-docx's doc.paragraphs property only
+    enumerates <w:p> elements that are DIRECT children of the body,
+    not ones nested inside a wrapper element like w:sdt. The result:
+    that one heading kept the TOC style's own default Calibri+blue
+    instead of getting normalized to Arial+black like everything else.
+
+    Fixed by walking the raw XML body recursively for every <w:r>
+    element regardless of nesting depth — catches paragraphs, table
+    cells, AND anything inside w:sdt or other wrapper elements in one
+    pass, rather than trying to enumerate every possible container
+    type doc.paragraphs/doc.tables might miss.
     """
-    for p in doc.paragraphs:
-        for run in p.runs:
-            _normalize_run_font(run)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for run in p.runs:
-                        _normalize_run_font(run)
+    body = doc.element.body
+    for r_element in body.iter(qn("w:r")):
+        _normalize_run_element_font(r_element)
 
 
 def _post_process_docx(docx_path: Path) -> None:
@@ -1009,6 +1058,7 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
     markdown_text = _strip_trailing_consultant_section(markdown_text)
     markdown_text = _replace_markers(markdown_text)
     markdown_text = _strip_stray_emoji(markdown_text)
+    markdown_text = _fix_over_escaped_bold_markers(markdown_text)
 
     with tempfile.TemporaryDirectory() as tmp:
         md_path   = Path(tmp) / "report.md"
