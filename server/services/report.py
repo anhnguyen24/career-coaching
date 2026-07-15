@@ -638,15 +638,27 @@ def _strip_trailing_consultant_section(text: str) -> str:
     Safety net: the prompt now instructs the model to never generate a
     separate consultant/audit section (Phần C), but LLM instruction-
     following isn't 100% guaranteed — this truncates anything from a
-    recognizable "Part C" heading onward if one slips through anyway,
+    recognizable "Part C" HEADING onward if one slips through anyway,
     so a prompt-compliance miss can't leak internal-only content (MBTI
     codes, raw audit notes) into the family-facing document.
+
+    CRITICAL: every pattern below must be anchored to an actual
+    markdown heading line (starting with #) — NOT free-floating text
+    anywhere in the document. An earlier version matched the bare
+    phrase "PHẦN C" anywhere in the text, which caught a real, severe
+    false positive in testing: the Mirror Check discussion legitimately
+    contains sentences like "em thấy có phần C (thích tương tác...)"
+    (referring to Portrait C), which matched that pattern at character
+    ~1850 of a 33,000-character report and silently truncated ~95% of
+    an otherwise good generation down to a single page. Never again —
+    every pattern here requires the match to be on its own heading
+    line, not just present somewhere in prose.
     """
     markers = [
-        r"^#\s*C\.\s",
-        r"PHẦN\s+C\b",
-        r"CONSULTANT\s+NOTE",
-        r"\[AUDIT\s+NỘI\s+BỘ\]",
+        r"^#{1,3}\s*C\.\s",                  # "# C. ..." or "## C. ..." — matches the letter-heading convention (rules 11/12) if the model reverts to a forbidden 3rd top-level part
+        r"^#{1,3}\s*.*CONSULTANT\s+NOTE",     # a heading line containing "CONSULTANT NOTE"
+        r"^#{1,3}\s*.*PHẦN\s+C\b",            # a heading line containing the legacy "PHẦN C" naming, ONLY if it's actually a heading — not prose mentioning "phần C" (e.g. "em thấy có phần C giống mình")
+        r"\[AUDIT\s+NỘI\s+BỘ\]",              # distinctive bracketed marker — specific enough to be safe as a free-floating match, unlikely to ever occur by coincidence in natural prose
     ]
     earliest_cut = None
     for pattern in markers:
