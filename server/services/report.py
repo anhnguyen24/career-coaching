@@ -794,14 +794,49 @@ def _get_page_content_width_dxa(doc: Document) -> int:
     return int(width.twips - left.twips - right.twips)
 
 
+def _set_cell_borders(cell) -> None:
+    """
+    Explicitly set borders on a single table cell (all 4 edges).
+
+    Cell-level borders take precedence over table-level borders in
+    OOXML's border resolution order — table-level (tblBorders) is the
+    lowest priority, cell-level (tcBorders) wins over it. Relying on
+    tblBorders alone (as an earlier version of _style_tables did) can
+    have some cells' borders silently overridden if pandoc's own table
+    conversion already assigned conflicting cell-level border
+    properties — confirmed in testing: the border between the header
+    row and first data row was invisible specifically in some columns
+    but not others, exactly the pattern you'd expect from a per-cell
+    override winning over a table-level default in some cells but not
+    all. Setting borders explicitly on every cell removes any
+    ambiguity — there's nothing left for another border definition to
+    win against.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    borders = tcPr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tcPr.append(borders)
+    for edge in ("top", "left", "bottom", "right"):
+        el = borders.find(qn(f"w:{edge}"))
+        if el is None:
+            el = OxmlElement(f"w:{edge}")
+            borders.append(el)
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "4")
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), "000000")
+
+
 def _style_tables(doc: Document) -> None:
     """
-    Post-process every table: add visible grid borders (pandoc's
-    default table style renders borderless tables), bold the header
-    row, and center the table horizontally on the page. Done via
-    python-docx after conversion rather than fighting pandoc's
-    reference-doc table-style-name resolution, which is fragile and
-    version-dependent.
+    Post-process every table: add visible grid borders on both the
+    table AND every individual cell (see _set_cell_borders — cell-
+    level is what actually guarantees visibility, table-level alone
+    isn't reliable), bold the header row, and center the table
+    horizontally on the page. Done via python-docx after conversion
+    rather than fighting pandoc's reference-doc table-style-name
+    resolution, which is fragile and version-dependent.
 
     Also forces each table to a FIXED total width matching the page's
     content width (tblLayout=fixed + explicit tblW), instead of the
@@ -819,6 +854,10 @@ def _style_tables(doc: Document) -> None:
         tbl = table._tbl
         tblPr = tbl.tblPr
 
+        # Table-level borders — kept as a baseline default, but
+        # _set_cell_borders below (applied to every cell) is what
+        # actually guarantees visibility everywhere, since cell-level
+        # wins any conflict with this.
         borders = OxmlElement("w:tblBorders")
         for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
             el = OxmlElement(f"w:{edge}")
@@ -854,6 +893,13 @@ def _style_tables(doc: Document) -> None:
             for row in table.rows:
                 for cell in row.cells:
                     cell.width = col_width
+
+        # Explicit per-cell borders — the actual fix (see
+        # _set_cell_borders docstring for why table-level alone isn't
+        # sufficient).
+        for row in table.rows:
+            for cell in row.cells:
+                _set_cell_borders(cell)
 
         if table.rows:
             for cell in table.rows[0].cells:
