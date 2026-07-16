@@ -714,6 +714,47 @@ def _replace_markers(text: str) -> str:
     return text
 
 
+def _ensure_pagebreak_before_part_b(text: str) -> str:
+    """
+    Guarantees a page break exists immediately before the "# B. ..."
+    heading, regardless of whether the model included the [PAGEBREAK]
+    marker rule 14 instructs it to place there.
+
+    Found in testing (token HN-2026-0011): the model sometimes omits
+    the marker entirely — not malformed or misplaced, genuinely absent
+    from the output, confirmed by searching for literal "PAGEBREAK"
+    text and finding none. Rather than relying on stronger prompt
+    wording (which only improves the odds, never guarantees it — the
+    same lesson from every other mechanical-formatting fix this
+    session), this finds the "# B." heading directly in the raw
+    markdown and inserts the page break there unconditionally. Runs
+    AFTER _replace_markers(), so any [PAGEBREAK] marker the model DID
+    include has already become a real OOXML block by this point — this
+    only needs to check for the heading itself, not worry about
+    double-inserting if the marker was also present, since the marker
+    (when present) is typically placed on its own line just before the
+    heading, not immediately adjacent to it, and this looks for the
+    heading pattern specifically, not the marker.
+    """
+    match = re.search(r"^#\s*B\.\s", text, re.MULTILINE)
+    if not match:
+        print("WARNING: No '# B.' heading found — cannot guarantee a page break "
+              "before Part B. This likely means Part B is missing entirely, a "
+              "more serious issue than a missing page break.")
+        return text
+
+    insert_pos = match.start()
+    # Avoid inserting a second, redundant page break immediately above
+    # this heading if one is already there from the model's own
+    # [PAGEBREAK] marker (now expanded to _PAGEBREAK_OOXML text) sitting
+    # directly adjacent, just before it.
+    preceding_text = text[:insert_pos]
+    if preceding_text.rstrip().endswith(_PAGEBREAK_OOXML.rstrip()):
+        return text
+
+    return preceding_text + "\n" + _PAGEBREAK_OOXML + "\n\n" + text[insert_pos:]
+
+
 def _strip_stray_emoji(text: str) -> str:
     """Backstop for the 'no emoji' prompt rule — removes any that slip
     through despite the instruction, rather than relying on compliance
@@ -1219,6 +1260,7 @@ def markdown_to_docx_base64(markdown_text: str) -> str:
     """
     markdown_text = _strip_trailing_consultant_section(markdown_text)
     markdown_text = _replace_markers(markdown_text)
+    markdown_text = _ensure_pagebreak_before_part_b(markdown_text)
     markdown_text = _strip_stray_emoji(markdown_text)
     markdown_text = _fix_over_escaped_bold_markers(markdown_text)
     markdown_text = _strip_em_en_dashes(markdown_text)
