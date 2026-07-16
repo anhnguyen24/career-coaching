@@ -22,8 +22,10 @@ import threading
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
+from zoneinfo import ZoneInfo
 
 import anthropic
 from docx import Document
@@ -316,6 +318,17 @@ def build_prompt(
 
     mirror_check_block = _build_mirror_check_block(mirror_check)
 
+    # Computed here, deterministically, rather than left for the model
+    # to guess — this was the actual root cause of two separate issues
+    # found in testing: the model sometimes left a literal
+    # "[Ngày phát hành]" placeholder bracket unfilled, and other times
+    # fabricated an inconsistent/wrong date (e.g. "2025", "Tháng 11,
+    # 2024") — because it was never actually GIVEN a real date value to
+    # use, only told in the instructions that this field should exist
+    # on the title page. Every other title-page field comes from real
+    # student_info data; this one now does too.
+    release_date_str = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%d/%m/%Y")
+
     filled_fields = f"""
 THÔNG TIN ĐIỀN VÀO MASTER ROUTER (thay cho các trường [Điền tên học sinh] v.v. ở trên):
 
@@ -329,6 +342,8 @@ Hoạt động yêu thích: {student_info.get('fav_activities', '')}
 Tình trạng case: Test lần đầu
 File đầu vào: File test (đã chấm điểm bên dưới){transcript_line}
 Format cần viết theo: format An Du, đầy đủ Student Snapshot + Executive Summary + Consultant Note
+Ngày phát hành báo cáo (dùng ĐÚNG giá trị này cho dòng "Ngày phát hành:" ở trang bìa, không tự
+  bịa hoặc để trống): {release_date_str}
 
 {mirror_check_block}
 
@@ -462,7 +477,9 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
 15. **Trang đầu tiên (trước marker `[TOC]`) phải trình bày trang trọng, giống trang bìa**:
     tiêu đề báo cáo là `# BÁO CÁO HƯỚNG NGHIỆP CÁ NHÂN`, theo sau là khối thông tin học sinh
     (Học sinh / Lớp-Trường / Định hướng / Route case / Ngày phát hành) viết dạng
-    `**Nhãn:** Giá trị` mỗi dòng — không thêm nội dung phân tích nào khác ở trang này.
+    `**Nhãn:** Giá trị` mỗi dòng — không thêm nội dung phân tích nào khác ở trang này. Dòng
+    "Ngày phát hành" PHẢI dùng đúng giá trị đã cho ở mục "Ngày phát hành báo cáo" bên dưới —
+    KHÔNG để trống, KHÔNG viết placeholder dạng "[Ngày phát hành]", KHÔNG tự đoán ngày khác.
 
 16. **Mọi con số điểm test khi nhắc đến trong bài viết phải kèm theo thang điểm tối đa**,
     dạng `X/Y`, để người đọc hình dung được vị trí trên thang — không viết số điểm trần trụi
