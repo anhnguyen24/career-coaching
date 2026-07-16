@@ -953,13 +953,58 @@ def _style_table_captions(doc: Document) -> None:
     model's markdown output (not a distinct Word style), so they need
     the same per-paragraph treatment as everything else post-processed
     here rather than relying on a style-level default.
+
+    Handles TWO distinct failure modes found in testing, both
+    resulting in a caption that doesn't render as real bold text:
+      1. Normal case: pandoc correctly parsed **Bảng N: ...** as bold
+         markdown — just needs centering added (bold is already real
+         formatting here).
+      2. Literal-asterisk case (token HN-2026-0011, later test): the
+         markdown ** syntax was NOT parsed as bold at all — the
+         paragraph's actual text is the literal string
+         "**Bảng 2: O*NET Role Expansion**", asterisks visibly
+         present. Most likely cause: the model didn't leave a blank
+         line between the table and this caption, which markdown
+         requires to correctly terminate a table before parsing the
+         next paragraph — pandoc's parser can then fail to recognize
+         the following ** as inline emphasis syntax and just treats
+         it as literal text. This case needs the asterisks physically
+         stripped from the run text, THEN bold+center applied,
+         otherwise the caption ships with visible "**" characters.
     """
-    caption_pattern = re.compile(r"^Bảng\s+\d+\s*:", re.IGNORECASE)
+    normal_pattern = re.compile(r"^Bảng\s+\d+\s*:", re.IGNORECASE)
+    literal_asterisk_pattern = re.compile(r"^\*\*\s*(Bảng\s+\d+\s*:.*?)\*\*\s*$", re.IGNORECASE)
+
     for p in doc.paragraphs:
-        if caption_pattern.match(p.text.strip()):
+        text = p.text.strip()
+
+        if normal_pattern.match(text):
             p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for run in p.runs:
                 run.bold = True
+            continue
+
+        literal_match = literal_asterisk_pattern.match(text)
+        if literal_match:
+            # Strip the literal ** characters from the actual run text,
+            # then apply real bold + center formatting — otherwise this
+            # ships with visible asterisks instead of proper bold text.
+            clean_text = literal_match.group(1).strip()
+            # Clear existing runs and replace with a single clean run,
+            # simplest reliable way to change run-level text content
+            # via python-docx (Run objects don't expose a text setter
+            # that handles removing/replacing cleanly otherwise).
+            for run in list(p.runs):
+                run.text = ""
+            if p.runs:
+                p.runs[0].text = clean_text
+                p.runs[0].bold = True
+            else:
+                new_run = p.add_run(clean_text)
+                new_run.bold = True
+            p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            print(f"WARNING: Fixed a table caption with unparsed literal markdown "
+                  f"asterisks: {clean_text[:50]!r}")
 
 
 def _force_portrait_orientation(doc: Document) -> None:
