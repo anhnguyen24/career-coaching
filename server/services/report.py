@@ -391,12 +391,14 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
    nêu lý do cụ thể ngay trong đoạn phân tích Holland (mục 4), không có phần audit riêng để
    đẩy lý do đó sang.
 
-3. **Tên đọc riêng phải LÀ chính tiêu đề đó, không phải placeholder.** Viết heading là chính
-   cụm từ đã nghĩ ra (ví dụ heading `### Người vẽ ý tưởng có phanh`), TUYỆT ĐỐI không viết
-   heading kiểu `### [TÊN ĐỌC RIÊNG]` rồi mới ghi tên thật ở dòng dưới. Cụm từ ngắn (4-6 chữ),
-   giàu hình ảnh, tóm gọn cách học sinh tạo giá trị (không phải tên nghề, không phải nhãn tính
-   cách). Sau tên, viết 2-3 câu giải thích, làm rõ tên này không ép học sinh vào một nghề
-   cố định.
+3. **Tên đọc riêng phải LÀ chính tiêu đề đó, không phải placeholder, VÀ phải là heading cấp 2
+   (H2) riêng, đứng NGAY ĐẦU tiên trong Phần A** — trước cả mục `a) Em là kiểu người như thế
+   nào`, không chôn nó làm heading cấp 3 bên trong một mục con khác. Viết heading là chính
+   cụm từ đã nghĩ ra (ví dụ `## Người vẽ ý tưởng có phanh`), TUYỆT ĐỐI không viết heading kiểu
+   `## [TÊN ĐỌC RIÊNG]` rồi mới ghi tên thật ở dòng dưới. Cụm từ ngắn (4-6 chữ), giàu hình
+   ảnh, tóm gọn cách học sinh tạo giá trị (không phải tên nghề, không phải nhãn tính cách). Sau
+   tên, viết 2-3 câu giải thích, làm rõ tên này không ép học sinh vào một nghề cố định. Đây là
+   điều đầu tiên người đọc thấy khi mở Phần A — phải nổi bật, không bị chôn trong một mục con.
 
 4. **Mỗi major family/vùng nghề đề xuất phải được đào sâu đầy đủ**, không chỉ liệt kê tên:
    - Vì sao hợp (nối tới Holland/OCEAN/SSS/bối cảnh cụ thể của học sinh này)
@@ -452,7 +454,9 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
 12. **Trong phần A, các mục con dùng chữ cái thường + dấu ngoặc đơn** (`a)`, `b)`, `c)`...)
     làm heading cấp 2 (H2), viết liền trước tiêu đề — ví dụ `## a) Em là kiểu người như thế
     nào`. Trong phần B, các mục lớn tiếp tục đánh số 1., 2., 3... như đã quy định ở các mục
-    trên (giữ nguyên cách đánh số hiện tại của phần B, không đổi).
+    trên (giữ nguyên cách đánh số hiện tại của phần B, không đổi). **Ngoại lệ:** tên đọc riêng
+    (mục 3) và "Tổng quan nhanh" (mục 17) đứng TRƯỚC mục `a)` đầu tiên và KHÔNG dùng chữ cái —
+    chỉ các mục con phân tích chi tiết SAU đó mới bắt đầu đánh chữ cái từ `a)`.
 
 13. **Mỗi bảng markdown phải có một dòng caption in đậm ngay PHÍA DƯỚI bảng** (không phải
     phía trên), dạng `**Bảng N: <tên bảng>**`, với N là số thứ tự bảng tăng dần xuyên suốt
@@ -486,6 +490,18 @@ YÊU CẦU BẮT BUỘC VỀ CẤU TRÚC ĐẦU RA (áp dụng thêm, ngoài quy
     một mình. Ví dụ: OCEAN Openness "4.25/5" (không chỉ viết "4.25"); Holland "A (45/50)"
     (không chỉ viết "A (45)"); SSS "2.83/5". Áp dụng cho MỌI con số điểm xuất hiện trong toàn
     bộ báo cáo, kể cả trong bảng.
+
+17. **Phải có mục "Tổng quan nhanh" (heading `## Tổng quan nhanh`), đứng NGAY SAU tên đọc
+    riêng (mục 3) và TRƯỚC mục `a) Em là kiểu người như thế nào`.** Đây là bản tóm tắt cực
+    ngắn, để một phụ huynh bận rộn đọc lướt 30 giây là nắm được ý chính, trước khi đọc chi
+    tiết ở các phần sau. Bắt buộc có đủ 3 phần, mỗi phần chỉ 2-4 câu hoặc vài gạch đầu dòng,
+    KHÔNG lặp lại toàn bộ nội dung chi tiết đã có ở Phần B (chỉ tóm tắt, chi tiết đầy đủ vẫn
+    nằm ở các mục sau như đã quy định):
+    - **Kết luận định hướng:** 1-2 câu nêu hướng chính đang nổi lên từ dữ liệu.
+    - **Vùng ngành nên ưu tiên** (danh sách ngắn, xếp theo thứ tự ưu tiên, mỗi dòng 1 câu):
+      liệt kê nhanh các vùng ngành sẽ được đào sâu ở Phần B, kèm mức ưu tiên ngắn gọn.
+    - **Vùng nên tránh hoặc cân nhắc kỹ** (danh sách ngắn): liệt kê nhanh những hướng KHÔNG
+      phù hợp hoặc cần thận trọng, sẽ được giải thích đầy đủ ở mục cảnh báo phía sau.
 """
 
     return (
