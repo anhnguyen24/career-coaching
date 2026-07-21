@@ -20,9 +20,19 @@ The raw text is split into these 4 sections here (backend), not by callers
 source of truth. If portrait_prompt.md's required output headers ever
 change, only _parse_sections() below needs updating.
 
-TODO: Wire in data quality flags (Fatigue Risk, Speed Risk, Relevance Risk)
-from the post-test UX survey once that data is available per-token.
-Currently defaults to "không" for all three.
+Transcript files (Pass 2, added 2026-07-17): routing the actual scanned
+học bạ/phiếu điểm into this step, not just report.py's final report,
+was motivated by a real quality gap found comparing an automated
+generation against a human consultant's manually-produced portraits
+for the same student (Ngọc Khánh) — the human version's Tension/Check
+portrait was grounded in a specific named data conflict (test scored
+her lower-social-energy, but a teacher's học bạ remark noted she's
+"nhiệt tình với hoạt động tập thể") that the automated version, only
+ever given the short fav_subjects/fav_activities survey answers, had
+no way to know about and produced a more generic third-angle portrait
+instead. Letting Claude read the actual transcript image directly
+(same mechanism as report.py's Pass 2) should surface that same kind
+of qualitative teacher-remark detail when it's present in the file.
 
 Cost: ~$0.05–$0.12 per call (Sonnet pricing: $3/$15 per 1M input/output tokens).
 Model: Claude Sonnet 4.6 (sufficient for this shorter, structured task).
@@ -117,7 +127,11 @@ def _holland_gap_note(groups: Dict[str, float], top3: list) -> str:
     )
 
 
-def build_portrait_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) -> str:
+def build_portrait_prompt(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    has_transcript_files: bool = False,
+) -> str:
     """
     Assemble the full prompt by combining:
     1. The QUY TRINH document (methodology/principles)
@@ -131,6 +145,25 @@ def build_portrait_prompt(student_info: Dict[str, Any], scores: Dict[str, Any]) 
     ocean = scores["ocean"]
     sss = scores["sss"]
     axes = mbti["axes"]
+
+    # Two independent ways học bạ/qualitative detail can arrive, same
+    # pattern as report.py's build_prompt(): if a real transcript file
+    # is attached, tell the model to read it directly for teacher
+    # remarks/qualitative detail (the kind of evidence that produced a
+    # much sharper, better-grounded Tension/Check portrait in a human
+    # consultant's manual comparison case) rather than relying only on
+    # the short fav_subjects/fav_activities survey answers.
+    if has_transcript_files:
+        hoc_ba_note = (
+            "đã đính kèm bên dưới dưới dạng file/ảnh — đọc trực tiếp nội dung file, "
+            "đặc biệt chú ý phần NHẬN XÉT CỦA GIÁO VIÊN nếu có (không chỉ điểm số), vì "
+            "đây thường là nguồn cho tín hiệu hành vi đời thực cụ thể (ví dụ: nhiệt tình "
+            "hoạt động tập thể, có năng khiếu mỹ thuật, chủ động tham gia lớp) — loại "
+            "bằng chứng rất hữu ích để xây Portrait C (Tension/Check) từ một mâu thuẫn "
+            "dữ liệu THẬT SỰ CỤ THỂ, thay vì một góc nhìn thứ ba chung chung."
+        )
+    else:
+        hoc_ba_note = str(student_info.get("fav_subjects", "Không có thông tin"))
 
     filled_data = f"""
 ---
@@ -171,7 +204,7 @@ SSS / Social Sync:
 - Social level: {sss["interpretation"]}
 - Diễn giải: {_sss_label(sss["score"])}
 
-Học bạ / môn hợp vibe: {student_info.get("fav_subjects", "Không có thông tin")}
+Học bạ / môn hợp vibe: {hoc_ba_note}
 Raw response / sở thích / hoạt động yêu thích: {student_info.get("fav_activities", "Không có thông tin")}
 Định hướng sau THPT: {student_info.get("after_school", "Không có thông tin")}
 Feedback phụ huynh / quan sát đời thực nếu có: Không có
@@ -287,7 +320,11 @@ def _parse_sections(text: str) -> Dict[str, str]:
     return sections
 
 
-def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> Dict[str, Any]:
+def generate_portraits(
+    student_info: Dict[str, Any],
+    scores: Dict[str, Any],
+    transcript_files: Optional[list] = None,
+) -> Dict[str, Any]:
     """
     Generate 3 micro-portraits for the Mirror Check step.
 
@@ -311,15 +348,31 @@ def generate_portraits(student_info: Dict[str, Any], scores: Dict[str, Any]) -> 
         raise RuntimeError("ANTHROPIC_API_KEY environment variable not set")
 
     client = anthropic.Anthropic(api_key=api_key, timeout=120.0)
-    prompt = build_portrait_prompt(student_info, scores)
+
+    # Reuses report.py's transcript content-block builder (mime
+    # whitelist, file-count cap, size cap, per-file error handling) —
+    # imported rather than duplicated, since it's the exact same
+    # validation logic and the exact same Anthropic API content-block
+    # shape needed here. If a third call site ever needs this, worth
+    # extracting to a shared services/transcript_utils.py at that point;
+    # not done now to avoid touching report.py's already-tested path.
+    from services.report import _build_transcript_content_blocks
+    transcript_blocks = _build_transcript_content_blocks(transcript_files)
+
+    prompt = build_portrait_prompt(student_info, scores, has_transcript_files=bool(transcript_blocks))
+
+    if transcript_blocks:
+        message_content = transcript_blocks + [{"type": "text", "text": prompt}]
+    else:
+        message_content = prompt
 
     print(f"=== Generating portraits for {student_info.get('name', '')} "
-          f"(prompt length: {len(prompt)} chars) ===")
+          f"(prompt length: {len(prompt)} chars, {len(transcript_blocks)} transcript file(s)) ===")
 
     message = client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": message_content}],
     )
 
     text = "".join(block.text for block in message.content if block.type == "text")

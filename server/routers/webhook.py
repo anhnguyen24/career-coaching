@@ -373,15 +373,40 @@ def test_report(
     return TestReportResponse(**result)
 
 
+class TranscriptFile(BaseModel):
+    """
+    One transcript/report-card file (PDF or image), base64-encoded by
+    Apps Script from a Drive attachment. Validated further server-side
+    against a mime-type whitelist and size caps in
+    services/report.py's _build_transcript_content_blocks() — this
+    model just defines the wire shape, doesn't enforce those rules
+    itself, so a rejected file here still arrives as a normal request
+    rather than a 422 (rejection happens gracefully downstream, with a
+    log line, not by failing the whole request).
+
+    Defined here (before GeneratePortraitsRequest) rather than down by
+    GenerateReportAsyncRequest where it originally lived, since
+    GeneratePortraitsRequest now needs it too and Python requires the
+    class to be defined before first use.
+    """
+    filename: str
+    mime_type: str
+    data: str  # base64-encoded file bytes
+
+
 class GeneratePortraitsRequest(BaseModel):
     token: str
     response_row: List[Any]
+    transcript_files: Optional[List[TranscriptFile]] = None
 
     class Config:
         json_schema_extra = {
             "example": {
                 "token": "HN-2026-0007",
-                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4]
+                "response_row": ["2026-01-01", "Tên HS", "HN-2026-0007", "...15 more info cols...", 3, 4, 4],
+                "transcript_files": [
+                    {"filename": "phieu_diem.jpg", "mime_type": "image/jpeg", "data": "<base64>"}
+                ],
             }
         }
 
@@ -413,7 +438,18 @@ def generate_portraits(
     mirror_question, consultant_note), and which portrait (A/B/C) the
     system considers score-matched.
 
-    Cost: ~$0.05–$0.12 per call.
+    transcript_files (optional, added 2026-07-17): if the student's
+    scanned học bạ/phiếu điểm is available at this point (attached
+    during the main survey submission, before this step runs), passing
+    it here lets the model read qualitative teacher remarks directly —
+    found to meaningfully sharpen the Tension/Check portrait (see
+    services/portraits.py's module docstring for the specific
+    motivating case). Optional — omitting it just means the model works
+    from the short fav_subjects/fav_activities survey answers only, same
+    as before this was added.
+
+    Cost: ~$0.05–$0.12 per call (transcript images add a modest amount
+    more on top via vision input tokens).
     """
     _verify_secret(x_webhook_secret)
 
@@ -422,10 +458,14 @@ def generate_portraits(
     scores_response = _build_response(payload.token, answers)
     student_info = _student_info_from_row(row)
 
+    transcript_files_list = (
+        [f.model_dump() for f in payload.transcript_files] if payload.transcript_files else None
+    )
+
     from services.portraits import generate_portraits as _gen_portraits
 
     try:
-        result = _gen_portraits(student_info, scores_response.model_dump())
+        result = _gen_portraits(student_info, scores_response.model_dump(), transcript_files=transcript_files_list)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Portrait generation failed: {str(e)}")
 
@@ -470,22 +510,6 @@ class MirrorCheckData(BaseModel):
     highlight_answer: Optional[str] = None
     mismatch_answer: Optional[str] = None
     aspiration_answer: Optional[str] = None
-
-
-class TranscriptFile(BaseModel):
-    """
-    One transcript/report-card file (PDF or image), base64-encoded by
-    Apps Script from a Drive attachment. Validated further server-side
-    against a mime-type whitelist and size caps in
-    services/report.py's _build_transcript_content_blocks() — this
-    model just defines the wire shape, doesn't enforce those rules
-    itself, so a rejected file here still arrives as a normal request
-    rather than a 422 (rejection happens gracefully downstream, with a
-    log line, not by failing the whole request).
-    """
-    filename: str
-    mime_type: str
-    data: str  # base64-encoded file bytes
 
 
 class GenerateReportAsyncRequest(BaseModel):
