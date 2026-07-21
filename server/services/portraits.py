@@ -225,6 +225,16 @@ NHIỆM VỤ
 Thực hiện đúng các bước phân tích trong QUY TRÌNH và PROMPT ở trên với dữ liệu học sinh đã điền.
 Trả output theo ĐÚNG định dạng bắt buộc trong PROMPT (4 phần: I. TÓM TẮT LOGIC, II. 3 MICRO-PORTRAITS, III. CÂU HỎI MIRROR CHECK, IV. CONSULTANT NOTE).
 Không thêm phần nào khác. Không để lộ mã MBTI/RIASEC/OCEAN/META64 trong Sections II và III.
+
+QUAN TRỌNG — CHỐNG "NAM CHÂM": Portrait A (score-matched) KHÔNG được ôm hết mọi đặc điểm tốt
+của học sinh (vừa sáng tạo, vừa phân tích sâu, vừa giỏi kết nối con người) chỉ vì nó là bản có
+điểm cao nhất. Đây là lỗi thường gặp cần tránh chủ động: nếu A "hút" hết các đặc điểm đáng chú ý,
+B và C sẽ chỉ còn là bản mờ nhạt của A, khiến học sinh không thể phân biệt thật sự ba bản khi đọc.
+Mỗi portrait PHẢI trả lời một câu hỏi tách biệt, không chồng lấn với hai portrait còn lại — ví dụ
+tách rõ theo kiểu: "Em thích tự tạo ra một cách thể hiện mới?" (A) — "Em thích đào sâu để hiểu rồi
+giải thích lại?" (B) — "Em thích làm cho ý tưởng sống lên khi có người khác cùng tham gia?" (C).
+Trước khi viết Section II, hãy tự kiểm tra: nếu bỏ tên portrait đi, một người đọc có thể đoán
+đúng A/B/C chỉ dựa vào nội dung không? Nếu không phân biệt được, phải viết lại cho tách nét hơn.
 """
 
     return (
